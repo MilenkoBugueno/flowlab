@@ -1,0 +1,13 @@
+.DS_Store
+.idea/
+.vscode/
+__pycache__/
+.venv/
+*.pyc
+
+# Forschungsdaten und Aufnahmen nie versionieren
+private-data/
+raw-data/
+recordings/
+consent-forms/
+participant-identities.*

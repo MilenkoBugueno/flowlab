@@ -1,0 +1,12 @@
+bug_id,related_item,severity,status,age_days,discovered_in,days_since_feature_start,assigned_team
+B-101,H-05,Critical,Open,24,System Test,22,Software
+B-102,H-05,High,In Progress,18,System Test,28,Software
+B-103,H-06,High,Open,21,System Test,18,Cloud
+B-104,H-07,Critical,In Progress,20,System Test,17,Hardware
+B-105,H-07,Medium,Open,16,System Test,21,Hardware
+B-106,H-08,High,Open,14,System Test,15,Software
+B-107,H-09,Medium,Open,13,System Test,20,Cloud
+B-108,H-12,Medium,Open,9,Integration,16,Software
+B-109,H-02,Medium,Open,8,Field Trial,31,Software
+B-110,H-04,High,In Progress,23,System Test,19,Hardware
+B-111,H-03,Low,Open,7,Field Trial,29,Cloud

@@ -1,0 +1,19 @@
+id,title,discipline,priority,current_state,age_days,active_days,blocked_or_waiting_days,defects_found
+H-01,Sensor-Kalibrierung,Hardware,Critical,Done,28,12,16,1
+H-02,Bluetooth-Kopplung,Software,Critical,Done,35,15,20,2
+H-03,Basis-Dashboard,Cloud,High,Done,31,14,17,1
+H-04,Gehäusedichtung,Hardware,High,Done,42,16,26,2
+H-05,Offline-Messung,Software,Critical,System Test,46,17,29,3
+H-06,Alarmgrenzen,Cloud,High,System Test,39,15,24,2
+H-07,Temperaturkompensation,Hardware,Critical,System Test,37,13,24,2
+H-08,App-Update,Software,Medium,System Test,29,12,17,1
+H-09,Nutzerverwaltung,Cloud,Medium,System Test,33,14,19,1
+H-10,Batteriestatus,Hardware,High,Waiting for System Test,34,11,23,0
+H-11,Datenexport,Cloud,High,Waiting for System Test,27,12,15,0
+H-12,Sensordiagnose,Software,High,Integration,25,13,12,1
+H-13,Geräteprotokoll,Software,Medium,Integration,22,12,10,0
+H-14,Mehrsprachigkeit,App,Medium,Integration,18,11,7,0
+H-15,Stoßfestigkeit,Hardware,High,Development,21,12,9,0
+H-16,Firmware-Rollback,Software,Critical,Development,17,11,6,0
+H-17,Trendansicht,App,Medium,Development,15,10,5,0
+H-18,Remote-Konfiguration,Cloud,High,Development,13,9,4,0
