@@ -4,6 +4,7 @@ import { DailyLog } from "./DailyLog";
 import { runScenario } from "./sim/engine";
 import { scenarioList, scenarios } from "./sim/scenarios";
 import type { Metrics, ScenarioId } from "./sim/types";
+import { withWorkflow } from "./sim/workflow";
 
 const metricLabels: Array<[keyof Metrics, string, string]> = [
   ["completedItems", "Completed items", "More is better, if cycle time remains healthy."],
@@ -22,15 +23,31 @@ export default function App() {
   const [scenarioId, setScenarioId] = useState<ScenarioId>("baseline");
   const [seedInput, setSeedInput] = useState("42");
   const [runKey, setRunKey] = useState(0);
+  const [workflowInput, setWorkflowInput] = useState(scenarios.baseline.workflow.stages.join(", "));
+  const [workflow, setWorkflow] = useState(scenarios.baseline.workflow.stages);
+  const [workflowError, setWorkflowError] = useState<string>();
   const seed = Number.isFinite(Number(seedInput)) ? Math.max(0, Math.floor(Number(seedInput))) : 42;
   const baseline = useMemo(() => runScenario(scenarios.baseline, seed), [seed, runKey]);
-  const selected = useMemo(() => runScenario(scenarios[scenarioId], seed), [scenarioId, seed, runKey]);
+  const selectedConfig = useMemo(() => withWorkflow(scenarios[scenarioId], workflow), [scenarioId, workflow]);
+  const selected = useMemo(() => runScenario(selectedConfig, seed), [selectedConfig, seed, runKey]);
   const [selectedDay, setSelectedDay] = useState(50);
   const scenario = scenarios[scenarioId];
 
   const updateScenario = (id: ScenarioId) => {
     setScenarioId(id);
     setSelectedDay(50);
+  };
+
+  const saveWorkflow = () => {
+    try {
+      const nextWorkflow = workflowInput.split(",");
+      withWorkflow(scenarios[scenarioId], nextWorkflow);
+      setWorkflow(nextWorkflow.map((stage) => stage.trim()));
+      setWorkflowError(undefined);
+      setSelectedDay(50);
+    } catch (error) {
+      setWorkflowError(error instanceof Error ? error.message : "Unable to save this workflow.");
+    }
   };
 
   return (
@@ -73,6 +90,22 @@ export default function App() {
         <p className="scenario-summary"><strong>{scenario.label}:</strong> {scenario.summary}</p>
       </section>
 
+      <section className="workflow-editor" aria-labelledby="workflow-heading">
+        <div>
+          <p className="eyebrow">Customize the flow</p>
+          <h2 id="workflow-heading">Workflow states</h2>
+          <p>Enter states in the order work moves through them, separated by commas. The first state receives work and the last state completes it.</p>
+        </div>
+        <div>
+          <label htmlFor="workflow-states">Workflow</label>
+          <div className="workflow-editor-controls">
+            <input id="workflow-states" value={workflowInput} onChange={(event) => setWorkflowInput(event.target.value)} />
+            <button type="button" onClick={saveWorkflow}>Save workflow</button>
+          </div>
+          {workflowError && <p className="workflow-error" role="alert">{workflowError}</p>}
+        </div>
+      </section>
+
       <section className="metrics" aria-label="Scenario comparison">
         {metricLabels.map(([key, label, help]) => {
           const value = selected.metrics[key];
@@ -94,7 +127,7 @@ export default function App() {
 
       <CfdChart result={selected} selectedDay={selectedDay} onSelectDay={setSelectedDay} />
 
-      <DailyLog entries={selected.dailyLog} seed={selected.seed} />
+      <DailyLog entries={selected.dailyLog} stages={selected.config.workflow.stages} seed={selected.seed} />
 
       <section className="explainers">
         <article>

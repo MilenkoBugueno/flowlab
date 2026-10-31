@@ -1,22 +1,9 @@
 import * as d3 from "d3";
 import { useMemo, useRef } from "react";
 import type { DailySnapshot, SimulationResult, Stage } from "../sim/types";
+import { activeStages } from "../sim/workflow";
 
-const stateOrder: Stage[] = ["done", "test", "review", "development", "ready"];
-const colours: Record<Stage, string> = {
-  ready: "#cbd5e1",
-  development: "#38bdf8",
-  review: "#fb923c",
-  test: "#a78bfa",
-  done: "#34d399",
-};
-const labels: Record<Stage, string> = {
-  ready: "Ready",
-  development: "Development",
-  review: "Code review",
-  test: "Test / release",
-  done: "Done",
-};
+const palette = ["#cbd5e1", "#38bdf8", "#fb923c", "#a78bfa", "#f472b6", "#facc15", "#34d399", "#60a5fa"];
 
 type ChartRow = { day: number } & Record<Stage, number>;
 
@@ -29,6 +16,9 @@ interface Props {
 export function CfdChart({ result, selectedDay, onSelectDay }: Props) {
   const svgRef = useRef<SVGSVGElement>(null);
   const { config, snapshots } = result;
+  const workflowStages = config.workflow.stages;
+  const stateOrder = [...workflowStages].reverse();
+  const colours = Object.fromEntries(workflowStages.map((stage, index) => [stage, palette[index % palette.length]]));
   const width = 920;
   const height = 390;
   const margin = { top: 40, right: 28, bottom: 52, left: 54 };
@@ -36,7 +26,7 @@ export function CfdChart({ result, selectedDay, onSelectDay }: Props) {
     () => snapshots.map((snapshot) => ({ day: snapshot.day, ...snapshot.states })),
     [snapshots],
   );
-  const stacked = useMemo(() => d3.stack<ChartRow>().keys(stateOrder)(rows), [rows]);
+  const stacked = useMemo(() => d3.stack<ChartRow>().keys(stateOrder)(rows), [rows, stateOrder]);
   const maxY = Math.max(1, d3.max(stacked, (series) => d3.max(series, (point) => point[1])) ?? 1);
   const x = d3.scaleLinear().domain([0, config.horizonDays - 1]).range([margin.left, width - margin.right]);
   const y = d3.scaleLinear().domain([0, maxY]).nice().range([height - margin.bottom, margin.top]);
@@ -68,7 +58,7 @@ export function CfdChart({ result, selectedDay, onSelectDay }: Props) {
       </div>
       <div className="legend" aria-label="CFD state legend">
         {stateOrder.map((stage) => (
-          <span key={stage}><i style={{ backgroundColor: colours[stage] }} />{labels[stage]}</span>
+          <span key={stage}><i style={{ backgroundColor: colours[stage] }} />{stage}</span>
         ))}
       </div>
       <svg
@@ -76,7 +66,7 @@ export function CfdChart({ result, selectedDay, onSelectDay }: Props) {
         className="cfd-chart"
         viewBox={`0 0 ${width} ${height}`}
         role="img"
-        aria-label="Cumulative flow diagram showing work in each product-development state over working days"
+        aria-label="Cumulative flow diagram showing work in each configured workflow state over working days"
         onClick={selectFromPointer}
       >
         <rect x={margin.left} y={margin.top} width={width - margin.left - margin.right} height={height - margin.top - margin.bottom} className="plot-background" />
@@ -87,11 +77,11 @@ export function CfdChart({ result, selectedDay, onSelectDay }: Props) {
           </g>
         ))}
         {stacked.map((series) => (
-          <path key={series.key} d={area(series) ?? ""} fill={colours[series.key as Stage]} className="area" />
+          <path key={series.key} d={area(series) ?? ""} fill={colours[series.key]} className="area" />
         ))}
         <line x1={x(selectedDay)} x2={x(selectedDay)} y1={margin.top} y2={height - margin.bottom} className="selected-day" />
         <line x1={x(config.incident.startDay)} x2={x(config.incident.startDay)} y1={margin.top} y2={height - margin.bottom} className="incident-line" />
-        <text x={x(config.incident.startDay) + 4} y={margin.top + 14} className="annotation">Review capacity incident</text>
+        <text x={x(config.incident.startDay) + 4} y={margin.top + 14} className="annotation">Capacity incident</text>
         {config.swarm && (
           <g>
             <line x1={x(config.swarm.startDay)} x2={x(config.swarm.startDay)} y1={margin.top} y2={height - margin.bottom} className="swarm-line" />
@@ -107,13 +97,14 @@ export function CfdChart({ result, selectedDay, onSelectDay }: Props) {
         <text x={(margin.left + width - margin.right) / 2} y={height - 10} className="axis-label" textAnchor="middle">Working day</text>
         <text transform={`translate(16 ${(margin.top + height - margin.bottom) / 2}) rotate(-90)`} className="axis-label" textAnchor="middle">Items</text>
       </svg>
-      {selected && <DayInspector snapshot={selected} />}
+      {selected && <DayInspector snapshot={selected} stages={workflowStages} />}
     </section>
   );
 }
 
-function DayInspector({ snapshot }: { snapshot: DailySnapshot }) {
-  const stagesToInspect: Stage[] = ["ready", "development", "review", "test"];
+function DayInspector({ snapshot, stages }: { snapshot: DailySnapshot; stages: Stage[] }) {
+  const statesToInspect = stages.slice(0, -1);
+  const active = new Set(activeStages({ stages }));
   return (
     <div className="day-inspector" aria-live="polite">
       <div>
@@ -122,8 +113,8 @@ function DayInspector({ snapshot }: { snapshot: DailySnapshot }) {
       </div>
       <div><span>Arrived</span><strong>{snapshot.arrivals}</strong></div>
       <div><span>Completed</span><strong>{snapshot.completions}</strong></div>
-      {stagesToInspect.map((stage) => (
-        <div key={stage}><span>{labels[stage]}</span><strong>{snapshot.states[stage]} <small>({snapshot.active[stage as keyof typeof snapshot.active] ?? 0} active)</small></strong></div>
+      {statesToInspect.map((stage) => (
+        <div key={stage}><span>{stage}</span><strong>{snapshot.states[stage]} {active.has(stage) && <small>({snapshot.active[stage] ?? 0} active)</small>}</strong></div>
       ))}
     </div>
   );

@@ -1,9 +1,11 @@
-export const stages = ["ready", "development", "review", "test", "done"] as const;
-export type Stage = (typeof stages)[number];
-export type ActiveStage = Exclude<Stage, "ready" | "done">;
+export type Stage = string;
+export type ActiveStage = string;
 export type ItemStatus = "waiting" | "active" | "blocked" | "done";
 export type ScenarioId = "baseline" | "swarm" | "wip" | "combined";
-export type MovementRoute = "external-to-ready" | "ready-to-development" | "development-to-review" | "review-to-test" | "test-to-done";
+
+export interface WorkflowConfig {
+  stages: Stage[];
+}
 
 export interface CapacityIncident {
   stage: ActiveStage;
@@ -15,8 +17,8 @@ export interface CapacityIncident {
 export interface SwarmPolicy {
   startDay: number;
   durationDays: number;
-  sourceStage: "development";
-  targetStage: "review";
+  sourceStage: ActiveStage;
+  targetStage: ActiveStage;
   capacityShift: number;
   rampUpEffectiveness: number;
 }
@@ -25,13 +27,14 @@ export interface ScenarioConfig {
   id: ScenarioId;
   label: string;
   summary: string;
+  workflow: WorkflowConfig;
   horizonDays: number;
   warmupDays: number;
   arrivalRatePerDay: number;
   batchDays: number[];
   batchSize: number;
-  baseRates: Record<ActiveStage, number>;
-  serviceEffort: Record<ActiveStage, { min: number; max: number }>;
+  baseRates: Partial<Record<ActiveStage, number>>;
+  serviceEffort: Partial<Record<ActiveStage, { min: number; max: number }>>;
   wipLimits?: Partial<Record<ActiveStage, number>>;
   incident: CapacityIncident;
   swarm?: SwarmPolicy;
@@ -65,10 +68,16 @@ export interface DailySnapshot {
   externalBacklog: number;
 }
 
+export interface DailyMovement {
+  from: Stage | "External";
+  to: Stage;
+  count: number;
+}
+
 export interface DailyLogEntry {
   day: number;
   seed: number;
-  movements: Record<MovementRoute, number>;
+  movements: DailyMovement[];
 }
 
 export interface Metrics {

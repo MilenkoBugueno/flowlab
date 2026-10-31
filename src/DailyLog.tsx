@@ -1,27 +1,24 @@
-import type { DailyLogEntry, MovementRoute } from "./sim/types";
+import type { DailyLogEntry, DailyMovement, Stage } from "./sim/types";
 
-const routes: MovementRoute[] = [
-  "external-to-ready",
-  "ready-to-development",
-  "development-to-review",
-  "review-to-test",
-  "test-to-done",
-];
+function routesFor(stages: Stage[]): Array<Pick<DailyMovement, "from" | "to">> {
+  return [
+    { from: "External", to: stages[0] },
+    ...stages.slice(0, -1).map((from, index) => ({ from, to: stages[index + 1] })),
+  ];
+}
 
-const labels: Record<MovementRoute, string> = {
-  "external-to-ready": "External → Ready",
-  "ready-to-development": "Ready → Development",
-  "development-to-review": "Development → Review",
-  "review-to-test": "Review → Test",
-  "test-to-done": "Test → Done",
-};
+function movementCount(entry: DailyLogEntry, route: Pick<DailyMovement, "from" | "to">): number {
+  return entry.movements.find((movement) => movement.from === route.from && movement.to === route.to)?.count ?? 0;
+}
 
 interface Props {
   entries: DailyLogEntry[];
+  stages: Stage[];
   seed: number;
 }
 
-export function DailyLog({ entries, seed }: Props) {
+export function DailyLog({ entries, stages, seed }: Props) {
+  const routes = routesFor(stages);
   return (
     <section className="daily-log-section" aria-labelledby="daily-log-title">
       <div className="daily-log-header">
@@ -36,14 +33,14 @@ export function DailyLog({ entries, seed }: Props) {
           <thead>
             <tr>
               <th scope="col">Day</th>
-              {routes.map((route) => <th key={route} scope="col">{labels[route]}</th>)}
+              {routes.map((route) => <th key={`${route.from}-${route.to}`} scope="col">{route.from} → {route.to}</th>)}
             </tr>
           </thead>
           <tbody>
             {entries.map((entry) => (
               <tr key={entry.day}>
                 <th scope="row">{entry.day}</th>
-                {routes.map((route) => <td key={route}>{entry.movements[route]}</td>)}
+                {routes.map((route) => <td key={`${route.from}-${route.to}`}>{movementCount(entry, route)}</td>)}
               </tr>
             ))}
           </tbody>
