@@ -1,7 +1,7 @@
 Feature: Customizable workflow
 
   FlowLab lets a reader model the workflow their team actually uses instead of
-  requiring the default Ready, Development, Review, Test, and Done states.
+  requiring the default Backlog, Development, Test, and Done states.
   A workflow is an ordered, linear set of states: work enters the first state,
   moves only to the next state, and leaves from the final state.
 

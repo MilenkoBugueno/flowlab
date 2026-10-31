@@ -81,8 +81,12 @@ export function CfdChart({ result, selectedDay, onSelectDay }: Props) {
           <path key={series.key} d={area(series) ?? ""} fill={colours[series.key]} className="area" />
         ))}
         <line x1={x(selectedDay)} x2={x(selectedDay)} y1={margin.top} y2={height - margin.bottom} className="selected-day" />
-        <line x1={x(config.incident.startDay)} x2={x(config.incident.startDay)} y1={margin.top} y2={height - margin.bottom} className="incident-line" />
-        <text x={x(config.incident.startDay) + 4} y={margin.top + 14} className="annotation">Capacity incident</text>
+        {config.incident && (
+          <g>
+            <line x1={x(config.incident.startDay)} x2={x(config.incident.startDay)} y1={margin.top} y2={height - margin.bottom} className="incident-line" />
+            <text x={x(config.incident.startDay) + 4} y={margin.top + 14} className="annotation">Capacity incident</text>
+          </g>
+        )}
         {config.swarm && (
           <g>
             <line x1={x(config.swarm.startDay)} x2={x(config.swarm.startDay)} y1={margin.top} y2={height - margin.bottom} className="swarm-line" />

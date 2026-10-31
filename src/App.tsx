@@ -11,8 +11,8 @@ import { activeStages, withWorkflow } from "./sim/workflow";
 const metricLabels: Array<[keyof Metrics, string, string]> = [
   ["completedItems", "Completed items", "More is better, if cycle time remains healthy."],
   ["p85CycleTime", "p85 cycle time", "Days for 85% of completed work to flow through."],
-  ["maxReviewWip", "Peak Review WIP", "The highest number of items in Code Review."],
-  ["reviewQueueDays", "Review queue-days", "Total waiting pressure in Code Review."],
+  ["maxReviewWip", "Peak constraint WIP", "The highest number of items in the constrained workflow stage."],
+  ["reviewQueueDays", "Constraint queue-days", "Total waiting pressure in the constrained workflow stage."],
 ];
 
 function formatMetric(key: keyof Metrics, value: Metrics[keyof Metrics]) {
@@ -24,6 +24,9 @@ function formatMetric(key: keyof Metrics, value: Metrics[keyof Metrics]) {
 export default function App() {
   const [scenarioId, setScenarioId] = useState<ScenarioId>("baseline");
   const [seedInput, setSeedInput] = useState("42");
+  const [arrivalRateInput, setArrivalRateInput] = useState(String(scenarios.baseline.arrivalRatePerDay));
+  const [savedArrivalRate, setSavedArrivalRate] = useState(scenarios.baseline.arrivalRatePerDay);
+  const [arrivalRateError, setArrivalRateError] = useState<string>();
   const [meanSeedCountInput, setMeanSeedCountInput] = useState("1");
   const [meanSeedCount, setMeanSeedCount] = useState(1);
   const [meanSeedError, setMeanSeedError] = useState<string>();
@@ -42,12 +45,16 @@ export default function App() {
   const seed = Number.isFinite(Number(seedInput)) ? Math.max(0, Math.floor(Number(seedInput))) : 42;
   const workflowConfig = useMemo(() => withWorkflow(scenarios[scenarioId], workflow), [scenarioId, workflow]);
   const selectedConfig = useMemo(
-    () => withSimulationSettings(workflowConfig, { baseRates: savedRates, incident: savedIncident, swarm: savedSwarm }),
-    [workflowConfig, savedRates, savedIncident, savedSwarm],
+    () => withSimulationSettings(workflowConfig, { arrivalRatePerDay: savedArrivalRate, baseRates: savedRates, incident: savedIncident, swarm: savedSwarm }),
+    [workflowConfig, savedArrivalRate, savedRates, savedIncident, savedSwarm],
+  );
+  const baselineConfig = useMemo(
+    () => withSimulationSettings(scenarios.baseline, { arrivalRatePerDay: savedArrivalRate }),
+    [savedArrivalRate],
   );
   const baseline = useMemo(
-    () => meanSeedCount === 1 ? runScenario(scenarios.baseline, seed) : runMeanScenario(scenarios.baseline, meanSeedCount, seed),
-    [seed, meanSeedCount, runKey],
+    () => meanSeedCount === 1 ? runScenario(baselineConfig, seed) : runMeanScenario(baselineConfig, meanSeedCount, seed),
+    [baselineConfig, seed, meanSeedCount, runKey],
   );
   const selected = useMemo(
     () => meanSeedCount === 1 ? runScenario(selectedConfig, seed) : runMeanScenario(selectedConfig, meanSeedCount, seed),
@@ -56,7 +63,13 @@ export default function App() {
   const [selectedDay, setSelectedDay] = useState(50);
   const scenario = scenarios[scenarioId];
   const activeWorkflowStages = activeStages(workflowConfig.workflow);
-  const incidentForm = incidentDraft ?? savedIncident ?? workflowConfig.incident;
+  const fallbackIncident: CapacityIncident = {
+    stage: activeWorkflowStages[0] ?? "",
+    startDay: 30,
+    endDay: 44,
+    ratePerDay: 0.4,
+  };
+  const incidentForm = incidentDraft ?? savedIncident ?? workflowConfig.incident ?? fallbackIncident;
   const fallbackSwarm: SwarmPolicy = {
     startDay: 45,
     durationDays: 10,
@@ -92,16 +105,26 @@ export default function App() {
 
   const saveRates = () => {
     try {
+      const arrivalRate = Number(arrivalRateInput);
       const rates = Object.fromEntries(activeWorkflowStages.map((stage) => [
         stage,
         Number(rateDraft[stage] ?? selectedConfig.baseRates[stage] ?? 1),
       ]));
-      withSimulationSettings(workflowConfig, { baseRates: rates, incident: savedIncident, swarm: savedSwarm });
+      withSimulationSettings(workflowConfig, { arrivalRatePerDay: arrivalRate, baseRates: rates, incident: savedIncident, swarm: savedSwarm });
+      setSavedArrivalRate(arrivalRate);
       setSavedRates(rates);
       setRateDraft({});
       setCapacityError(undefined);
+      setArrivalRateError(undefined);
     } catch (error) {
-      setCapacityError(error instanceof Error ? error.message : "Unable to save capacity allocation.");
+      const message = error instanceof Error ? error.message : "Unable to save capacity allocation.";
+      if (message.includes("arrival rate")) {
+        setArrivalRateError(message);
+        setCapacityError(undefined);
+      } else {
+        setCapacityError(message);
+        setArrivalRateError(undefined);
+      }
     }
   };
 
@@ -134,7 +157,8 @@ export default function App() {
       setMeanSeedError(undefined);
       setRunKey((value) => value + 1);
     } catch (error) {
-      setMeanSeedError(error instanceof Error ? error.message : "Unable to set the mean CFD seed count.");
+      const message = error instanceof Error ? error.message : "Unable to save simulation settings.";
+      setMeanSeedError(message);
     }
   };
 
@@ -198,7 +222,11 @@ export default function App() {
 
           <details className="settings-panel" open>
             <summary>Capacity allocation</summary>
-            <p>Daily processing rate for each active stage.</p>
+            <p>Set incoming demand and the daily processing rate for each active stage.</p>
+            <label className="arrival-rate-field" htmlFor="arrival-rate">
+              <span>Average arrivals / day</span>
+              <input id="arrival-rate" type="number" min="0" step="0.1" value={arrivalRateInput} onChange={(event) => setArrivalRateInput(event.target.value)} />
+            </label>
             <div className="rate-list">
               {activeWorkflowStages.map((stage) => (
                 <label key={stage} htmlFor={`rate-${stage}`}>
@@ -214,8 +242,9 @@ export default function App() {
                 </label>
               ))}
             </div>
-            <button type="button" onClick={saveRates}>Save rates</button>
+            <button type="button" onClick={saveRates}>Save allocation</button>
             {capacityError && <p className="settings-error" role="alert">{capacityError}</p>}
+            {arrivalRateError && <p className="settings-error" role="alert">{arrivalRateError}</p>}
           </details>
 
           <details className="settings-panel">

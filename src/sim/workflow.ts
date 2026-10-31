@@ -3,7 +3,7 @@ import type { ActiveStage, ScenarioConfig, Stage, WorkflowConfig } from "./types
 const defaultEffort = { min: 0.75, max: 1.25 };
 
 export const defaultWorkflow: WorkflowConfig = {
-  stages: ["Ready", "Development", "Review", "Test", "Done"],
+  stages: ["Backlog", "Development", "Test", "Done"],
 };
 
 export function activeStages(workflow: WorkflowConfig): ActiveStage[] {
@@ -39,7 +39,7 @@ export function withWorkflow(config: ScenarioConfig, states: string[]): Scenario
     const oldIndex = oldActive.indexOf(stage);
     return oldIndex >= 0 ? nextActive[Math.min(oldIndex, nextActive.length - 1)] : undefined;
   };
-  const incidentStage = mapExistingStage(config.incident.stage) ?? stages[0];
+  const incidentStage = config.incident && (mapExistingStage(config.incident.stage) ?? stages[0]);
   const mappedSource = config.swarm && mapExistingStage(config.swarm.sourceStage);
   const mappedTarget = config.swarm && mapExistingStage(config.swarm.targetStage);
   const wipLimits = config.wipLimits
@@ -56,7 +56,7 @@ export function withWorkflow(config: ScenarioConfig, states: string[]): Scenario
     baseRates,
     serviceEffort,
     wipLimits,
-    incident: { ...config.incident, stage: incidentStage },
+    incident: config.incident && incidentStage ? { ...config.incident, stage: incidentStage } : undefined,
     swarm: config.swarm && mappedSource && mappedTarget && mappedSource !== mappedTarget
       ? { ...config.swarm, sourceStage: mappedSource, targetStage: mappedTarget }
       : undefined,

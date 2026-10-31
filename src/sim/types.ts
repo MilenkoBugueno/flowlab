@@ -36,7 +36,7 @@ export interface ScenarioConfig {
   baseRates: Partial<Record<ActiveStage, number>>;
   serviceEffort: Partial<Record<ActiveStage, { min: number; max: number }>>;
   wipLimits?: Partial<Record<ActiveStage, number>>;
-  incident: CapacityIncident;
+  incident?: CapacityIncident;
   swarm?: SwarmPolicy;
 }
 

@@ -41,7 +41,7 @@ function nextStage(stage: ActiveStage, stages: Stage[]): Stage {
 
 export function processingRateFor(stage: ActiveStage, day: number, config: ScenarioConfig): number {
   let rate = config.baseRates[stage] ?? 1;
-  if (config.incident.stage === stage && day >= config.incident.startDay && day <= config.incident.endDay) {
+  if (config.incident && config.incident.stage === stage && day >= config.incident.startDay && day <= config.incident.endDay) {
     rate = config.incident.ratePerDay;
   }
   const swarm = config.swarm;
@@ -131,25 +131,27 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
     }
   };
 
-  const startWork = (day: number, stage: ActiveStage) => {
-    if (items.some((item) => item.stage === stage && item.status === "active")) return;
-    const next = items
-      .filter((item) => item.stage === stage && item.status === "waiting")
-      .sort((a, b) => (a.enteredAt[stage] ?? 0) - (b.enteredAt[stage] ?? 0))[0];
-    if (!next) return;
-    next.status = "active";
-    next.startedAt[stage] = day;
-    record(day, "started", next, stage);
-  };
-
   const processWork = (day: number, stage: ActiveStage) => {
-    const currentlyActive = items.find((item) => item.stage === stage && item.status === "active");
-    if (!currentlyActive) return;
-    currentlyActive.effortRemaining -= processingRateFor(stage, day, config);
-    if (currentlyActive.effortRemaining > 0) return;
-    currentlyActive.effortRemaining = 0;
-    currentlyActive.status = "blocked";
-    record(day, "blocked", currentlyActive, stage);
+    let remainingCapacity = processingRateFor(stage, day, config);
+    while (remainingCapacity > 0) {
+      let currentlyActive = items.find((item) => item.stage === stage && item.status === "active");
+      if (!currentlyActive) {
+        currentlyActive = items
+          .filter((item) => item.stage === stage && item.status === "waiting")
+          .sort((a, b) => (a.enteredAt[stage] ?? 0) - (b.enteredAt[stage] ?? 0))[0];
+        if (!currentlyActive) return;
+        currentlyActive.status = "active";
+        currentlyActive.startedAt[stage] = day;
+        record(day, "started", currentlyActive, stage);
+      }
+      const effortApplied = Math.min(currentlyActive.effortRemaining, remainingCapacity);
+      currentlyActive.effortRemaining -= effortApplied;
+      remainingCapacity -= effortApplied;
+      if (currentlyActive.effortRemaining > 0) return;
+      currentlyActive.effortRemaining = 0;
+      currentlyActive.status = "blocked";
+      record(day, "blocked", currentlyActive, stage);
+    }
   };
 
   for (let day = 0; day < config.horizonDays; day += 1) {
@@ -174,7 +176,6 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
     // admissions/pulls happen, then available stages begin work.
     [...active].reverse().forEach((stage) => moveBlocked(day, stage));
     pullEntryWork(day);
-    active.forEach((stage) => startWork(day, stage));
     active.forEach((stage) => processWork(day, stage));
 
     const states = emptyStages(stages);

@@ -19,6 +19,13 @@ export function withProcessingRates(config: ScenarioConfig, updates: Partial<Rec
   return { ...config, baseRates };
 }
 
+export function withArrivalRate(config: ScenarioConfig, arrivalRatePerDay: number): ScenarioConfig {
+  if (!Number.isFinite(arrivalRatePerDay) || arrivalRatePerDay < 0) {
+    throw new Error("The arrival rate must be zero or greater.");
+  }
+  return { ...config, arrivalRatePerDay };
+}
+
 export function validateIncident(config: ScenarioConfig, incident: CapacityIncident): CapacityIncident {
   const active = activeStages(config.workflow);
   assertActiveStage(incident.stage, active, "The incident stage");
@@ -48,15 +55,21 @@ export function validateSwarm(config: ScenarioConfig, swarm: SwarmPolicy): Swarm
 }
 
 export interface SimulationSettings {
+  arrivalRatePerDay?: number;
   baseRates?: Partial<Record<ActiveStage, number>>;
   incident?: CapacityIncident;
   swarm?: SwarmPolicy;
 }
 
 export function withSimulationSettings(config: ScenarioConfig, settings: SimulationSettings): ScenarioConfig {
-  const withRates = withProcessingRates(config, settings.baseRates ?? {});
+  const withArrival = settings.arrivalRatePerDay === undefined
+    ? config
+    : withArrivalRate(config, settings.arrivalRatePerDay);
+  const withRates = withProcessingRates(withArrival, settings.baseRates ?? {});
   const active = activeStages(withRates.workflow);
-  const incident = active.length ? validateIncident(withRates, settings.incident ?? withRates.incident) : withRates.incident;
+  const incident = settings.incident
+    ? validateIncident(withRates, settings.incident)
+    : withRates.incident;
   const swarm = settings.swarm ?? withRates.swarm;
   if (swarm && active.length >= 2) validateSwarm(withRates, swarm);
   return { ...withRates, incident, swarm: active.length >= 2 ? swarm : undefined };

@@ -5,6 +5,14 @@ import { scenarios } from "./scenarios";
 import { withWorkflow } from "./workflow";
 
 describe("FlowLab simulation engine", () => {
+  it("uses the Test bottleneck workflow by default", () => {
+    expect(scenarios.baseline.workflow.stages).toEqual(["Backlog", "Development", "Test", "Done"]);
+    expect(scenarios.baseline.arrivalRatePerDay).toBe(1.6);
+    expect(scenarios.baseline.baseRates).toEqual({ Development: 1.4, Test: 0.7 });
+    expect(scenarios.baseline.incident).toBeUndefined();
+    expect(scenarios.swarm.swarm).toMatchObject({ sourceStage: "Development", targetStage: "Test" });
+  });
+
   it("is deterministic for a fixed seed", () => {
     expect(runScenario(scenarios.baseline, 42).snapshots).toEqual(runScenario(scenarios.baseline, 42).snapshots);
   });
@@ -18,12 +26,12 @@ describe("FlowLab simulation engine", () => {
     }
   });
 
-  it("honours the Review WIP limit", () => {
+  it("honours the Test WIP limit", () => {
     const result = runScenario(scenarios.wip, 42);
-    expect(Math.max(...result.snapshots.map((snapshot) => snapshot.states.Review))).toBeLessThanOrEqual(6);
+    expect(Math.max(...result.snapshots.map((snapshot) => snapshot.states.Test))).toBeLessThanOrEqual(6);
   });
 
-  it("reduces Review queue-days with a scheduled swarm for the default seed", () => {
+  it("reduces Test queue-days with a scheduled swarm for the default seed", () => {
     const baseline = runScenario(scenarios.baseline, 42);
     const swarm = runScenario(scenarios.swarm, 42);
     expect(swarm.metrics.reviewQueueDays).toBeLessThan(baseline.metrics.reviewQueueDays);
@@ -60,11 +68,11 @@ describe("FlowLab simulation engine", () => {
     ]));
   });
 
-  it("keeps named interventions attached to their stage when a state is inserted", () => {
+  it("keeps named swarm stages attached when a state is inserted", () => {
     const config = withWorkflow(scenarios.combined, ["Ready", "Discovery", "Development", "Review", "Test", "Done"]);
-    expect(config.incident.stage).toBe("Review");
+    expect(config.incident).toBeUndefined();
     expect(config.swarm?.sourceStage).toBe("Development");
-    expect(config.swarm?.targetStage).toBe("Review");
+    expect(config.swarm?.targetStage).toBe("Test");
   });
 
   it("keeps the demand stream identical across scenarios for the same seed", () => {

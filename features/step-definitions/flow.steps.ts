@@ -25,6 +25,8 @@ class FlowLabWorld extends World {
   meanBaseline?: MeanSimulationResult;
   meanSeedError?: string;
   meanSeedCountBeforeEdit?: number;
+  arrivalRateError?: string;
+  arrivalRateBeforeEdit?: number;
 }
 
 setWorldConstructor(FlowLabWorld);
@@ -54,11 +56,11 @@ Given("the standard FlowLab baseline scenario", function (this: FlowLabWorld) {
   this.config = scenarios.baseline;
 });
 
-Given("the baseline scenario with a scheduled Review swarm", function (this: FlowLabWorld) {
+Given("the baseline scenario with a scheduled Test swarm", function (this: FlowLabWorld) {
   this.config = scenarios.swarm;
 });
 
-Given("the baseline scenario with Development and Review WIP limits", function (this: FlowLabWorld) {
+Given("the baseline scenario with Development and Test WIP limits", function (this: FlowLabWorld) {
   this.config = scenarios.wip;
 });
 
@@ -74,12 +76,11 @@ When("I simulate the scenario twice with seed {int}", function (this: FlowLabWor
   this.secondResult = runScenario(this.config, seed);
 });
 
-Then("the Code Review CFD band widens during the incident", function (this: FlowLabWorld) {
+Then("the Test CFD band becomes the dominant active queue", function (this: FlowLabWorld) {
   const result = resultFor(this);
-  const { startDay, endDay } = result.config.incident;
-  const atStart = result.snapshots[startDay].states.Review;
-  const atEnd = result.snapshots[endDay].states.Review;
-  assert.ok(atEnd > atStart, `Expected Review WIP to grow during incident (${atStart} → ${atEnd})`);
+  const peakTest = Math.max(...result.snapshots.map((snapshot) => snapshot.states.Test));
+  const peakDevelopment = Math.max(...result.snapshots.map((snapshot) => snapshot.states.Development));
+  assert.ok(peakTest > peakDevelopment, `Expected Test WIP (${peakTest}) to exceed Development WIP (${peakDevelopment})`);
 });
 
 Then("every arrived item is either completed or active in the workflow", function (this: FlowLabWorld) {
@@ -96,29 +97,30 @@ Then("both simulations have identical daily snapshots", function (this: FlowLabW
   assert.deepEqual(resultFor(this).snapshots, this.secondResult?.snapshots);
 });
 
-Then("the swarm runs after the review incident", function (this: FlowLabWorld) {
+Then("the swarm sends capacity from Development to Test", function (this: FlowLabWorld) {
   const result = resultFor(this);
   assert.ok(result.config.swarm, "Expected selected scenario to include a swarm");
-  assert.ok(result.config.swarm.startDay > result.config.incident.endDay);
+  assert.equal(result.config.swarm.sourceStage, "Development");
+  assert.equal(result.config.swarm.targetStage, "Test");
 });
 
-Then("Review queue-days are lower than in the baseline for the same seed", function (this: FlowLabWorld) {
+Then("Test queue-days are lower than in the baseline for the same seed", function (this: FlowLabWorld) {
   const result = resultFor(this);
   assert.ok(this.baseline, "Expected baseline comparison");
   assert.ok(
     result.metrics.reviewQueueDays < this.baseline.metrics.reviewQueueDays,
-    `Expected swarm Review queue-days (${result.metrics.reviewQueueDays}) below baseline (${this.baseline.metrics.reviewQueueDays})`,
+    `Expected swarm Test queue-days (${result.metrics.reviewQueueDays}) below baseline (${this.baseline.metrics.reviewQueueDays})`,
   );
 });
 
-Then("Review WIP never exceeds {int} items", function (this: FlowLabWorld, limit: number) {
+Then("Test WIP never exceeds {int} items", function (this: FlowLabWorld, limit: number) {
   const result = resultFor(this);
-  assert.ok(result.snapshots.every((snapshot) => snapshot.states.Review <= limit));
+  assert.ok(result.snapshots.every((snapshot) => snapshot.states.Test <= limit));
 });
 
 Then("constrained work remains visible upstream", function (this: FlowLabWorld) {
   const result = resultFor(this);
-  assert.ok(result.snapshots.some((snapshot) => snapshot.states.Ready > 0 || snapshot.states.Development >= 6));
+  assert.ok(result.snapshots.some((snapshot) => snapshot.states.Backlog > 0 || snapshot.states.Development >= 6));
 });
 
 Then("the daily log contains one entry for each simulated working day", function (this: FlowLabWorld) {
@@ -141,19 +143,18 @@ Then("each daily entry lists the number of items moved between each pair of stat
   }
 });
 
-Then("movements into the workflow are recorded as External to Ready", function (this: FlowLabWorld) {
+Then("movements into the workflow are recorded as External to Backlog", function (this: FlowLabWorld) {
   const result = resultFor(this);
   assert.equal(
-    movementCount(result, "External", "Ready"),
+    movementCount(result, "External", "Backlog"),
     result.items.length,
   );
 });
 
-Then("movements through the workflow are recorded as Ready to Development, Development to Review, and Review to Test", function (this: FlowLabWorld) {
+Then("movements through the workflow are recorded as Backlog to Development and Development to Test", function (this: FlowLabWorld) {
   const result = resultFor(this);
-  assert.ok(movementCount(result, "Ready", "Development") > 0);
-  assert.ok(movementCount(result, "Development", "Review") > 0);
-  assert.ok(movementCount(result, "Review", "Test") > 0);
+  assert.ok(movementCount(result, "Backlog", "Development") > 0);
+  assert.ok(movementCount(result, "Development", "Test") > 0);
 });
 
 Then("completed work is recorded as Test to Done", function (this: FlowLabWorld) {
@@ -169,10 +170,10 @@ Then("movements that do not occur on a day are shown with zero counts", function
   assert.equal(zeroCountMovement.count, 0);
 });
 
-Then("the sum of all daily External to Ready movements equals the number of arrived items", function (this: FlowLabWorld) {
+Then("the sum of all daily External to Backlog movements equals the number of arrived items", function (this: FlowLabWorld) {
   const result = resultFor(this);
   const arrivals = result.snapshots.reduce((total, snapshot) => total + snapshot.arrivals, 0);
-  const loggedArrivals = movementCount(result, "External", "Ready");
+  const loggedArrivals = movementCount(result, "External", "Backlog");
   assert.equal(loggedArrivals, arrivals);
 });
 
@@ -319,10 +320,10 @@ Given("I am editing the capacity allocation controls", function (this: FlowLabWo
   this.capacityBeforeEdit = this.config;
 });
 
-When("I save a daily processing rate of 0 for Review", function (this: FlowLabWorld) {
+When("I save a daily processing rate of 0 for Test", function (this: FlowLabWorld) {
   assert.ok(this.config, "Choose a scenario before editing capacity");
   try {
-    this.config = withProcessingRates(this.config, { Review: 0 });
+    this.config = withProcessingRates(this.config, { Test: 0 });
   } catch (error) {
     this.capacityError = error instanceof Error ? error.message : String(error);
   }
@@ -341,30 +342,33 @@ Given("I am editing the intervention controls", function (this: FlowLabWorld) {
   this.interventionsBeforeEdit = this.config;
 });
 
-When("I set an incident in Review from day {int} through day {int} with a daily processing rate of {float}", function (this: FlowLabWorld, startDay: number, endDay: number, ratePerDay: number) {
+When("I set an incident in Test from day {int} through day {int} with a daily processing rate of {float}", function (this: FlowLabWorld, startDay: number, endDay: number, ratePerDay: number) {
   assert.ok(this.config, "Choose a scenario before editing interventions");
-  const incident: CapacityIncident = { stage: "Review", startDay, endDay, ratePerDay };
+  const incident: CapacityIncident = { stage: "Test", startDay, endDay, ratePerDay };
   this.config = withSimulationSettings(this.config, { incident });
 });
 
-Then("the simulation applies the configured incident only to Review on days {int} through {int}", function (this: FlowLabWorld, startDay: number, endDay: number) {
+Then("the simulation applies the configured incident only to Test on days {int} through {int}", function (this: FlowLabWorld, startDay: number, endDay: number) {
   const result = resultFor(this);
-  assert.equal(result.config.incident.stage, "Review");
-  assert.equal(result.config.incident.startDay, startDay);
-  assert.equal(result.config.incident.endDay, endDay);
+  assert.ok(result.config.incident, "Expected a configured incident");
+  const incident = result.config.incident;
+  assert.equal(incident.stage, "Test");
+  assert.equal(incident.startDay, startDay);
+  assert.equal(incident.endDay, endDay);
   assert.equal(processingRateFor("Development", startDay, result.config), result.config.baseRates.Development);
-  assert.equal(processingRateFor("Review", startDay - 1, result.config), result.config.baseRates.Review);
-  assert.equal(processingRateFor("Review", endDay + 1, result.config), result.config.baseRates.Review);
+  assert.equal(processingRateFor("Test", startDay - 1, result.config), result.config.baseRates.Test);
+  assert.equal(processingRateFor("Test", endDay + 1, result.config), result.config.baseRates.Test);
 });
 
-Then("Review uses a daily processing rate of {float} while the incident is active", function (this: FlowLabWorld, rate: number) {
+Then("Test uses a daily processing rate of {float} while the incident is active", function (this: FlowLabWorld, rate: number) {
   const result = resultFor(this);
-  assert.equal(processingRateFor("Review", result.config.incident.startDay, result.config), rate);
-  assert.equal(processingRateFor("Review", result.config.incident.endDay, result.config), rate);
+  assert.ok(result.config.incident, "Expected a configured incident");
+  assert.equal(processingRateFor("Test", result.config.incident.startDay, result.config), rate);
+  assert.equal(processingRateFor("Test", result.config.incident.endDay, result.config), rate);
 });
 
-When("I set a swarm from Development to Review starting on day {int} for {int} days", function (this: FlowLabWorld, startDay: number, durationDays: number) {
-  this.pendingSwarm = { sourceStage: "Development", targetStage: "Review", startDay, durationDays, capacityShift: 0.5, rampUpEffectiveness: 0.75 };
+When("I set a swarm from Development to Test starting on day {int} for {int} days", function (this: FlowLabWorld, startDay: number, durationDays: number) {
+  this.pendingSwarm = { sourceStage: "Development", targetStage: "Test", startDay, durationDays, capacityShift: 0.5, rampUpEffectiveness: 0.75 };
 });
 
 When("I set the swarm capacity shift to {float} and the first-day effectiveness to {float}", function (this: FlowLabWorld, capacityShift: number, rampUpEffectiveness: number) {
@@ -375,19 +379,19 @@ When("I set the swarm capacity shift to {float} and the first-day effectiveness 
   });
 });
 
-Then("the simulation temporarily shifts {float} daily capacity from Development to Review", function (this: FlowLabWorld, shift: number) {
+Then("the simulation temporarily shifts {float} daily capacity from Development to Test", function (this: FlowLabWorld, shift: number) {
   const result = resultFor(this);
   assert.ok(result.config.swarm, "Expected a configured swarm");
   const steadyDay = result.config.swarm.startDay + 1;
   assert.equal(processingRateFor("Development", steadyDay, result.config), result.config.baseRates.Development! - shift);
-  assert.equal(processingRateFor("Review", steadyDay, result.config), result.config.baseRates.Review! + shift);
+  assert.equal(processingRateFor("Test", steadyDay, result.config), result.config.baseRates.Test! + shift);
 });
 
-Then("Review receives {float} daily capacity from the swarm on its first day", function (this: FlowLabWorld, contribution: number) {
+Then("Test receives {float} daily capacity from the swarm on its first day", function (this: FlowLabWorld, contribution: number) {
   const result = resultFor(this);
   assert.ok(result.config.swarm, "Expected a configured swarm");
-  const firstDayRate = processingRateFor("Review", result.config.swarm.startDay, result.config);
-  assert.ok(Math.abs(firstDayRate - result.config.baseRates.Review! - contribution) < 1e-9);
+  const firstDayRate = processingRateFor("Test", result.config.swarm.startDay, result.config);
+  assert.ok(Math.abs(firstDayRate - result.config.baseRates.Test! - contribution) < 1e-9);
 });
 
 Then("the swarm stops after {int} days", function (this: FlowLabWorld, duration: number) {
@@ -395,14 +399,14 @@ Then("the swarm stops after {int} days", function (this: FlowLabWorld, duration:
   assert.ok(result.config.swarm, "Expected a configured swarm");
   const afterSwarm = result.config.swarm.startDay + duration;
   assert.equal(processingRateFor("Development", afterSwarm, result.config), result.config.baseRates.Development);
-  assert.equal(processingRateFor("Review", afterSwarm, result.config), result.config.baseRates.Review);
+  assert.equal(processingRateFor("Test", afterSwarm, result.config), result.config.baseRates.Test);
 });
 
 When("I save a swarm that starts and ends in the same stage", function (this: FlowLabWorld) {
   assert.ok(this.config, "Choose a scenario before editing interventions");
   try {
     this.config = withSimulationSettings(this.config, {
-      swarm: { sourceStage: "Review", targetStage: "Review", startDay: 45, durationDays: 10, capacityShift: 0.5, rampUpEffectiveness: 0.75 },
+      swarm: { sourceStage: "Test", targetStage: "Test", startDay: 45, durationDays: 10, capacityShift: 0.5, rampUpEffectiveness: 0.75 },
     });
   } catch (error) {
     this.interventionError = error instanceof Error ? error.message : String(error);
@@ -415,6 +419,37 @@ Then("I am told that a swarm needs different source and target stages", function
 
 Then("the current intervention settings remain unchanged", function (this: FlowLabWorld) {
   assert.equal(this.config, this.interventionsBeforeEdit);
+});
+
+Given("I am editing the arrival rate", function (this: FlowLabWorld) {
+  this.config = scenarios.baseline;
+  this.arrivalRateBeforeEdit = this.config.arrivalRatePerDay;
+});
+
+When("I save an average arrival rate of {float} items per day", function (this: FlowLabWorld, arrivalRatePerDay: number) {
+  assert.ok(this.config, "Choose a scenario before editing the arrival rate");
+  try {
+    this.config = withSimulationSettings(this.config, { arrivalRatePerDay });
+  } catch (error) {
+    this.arrivalRateError = error instanceof Error ? error.message : String(error);
+  }
+});
+
+Then("the simulation uses an average arrival rate of {float} items per day", function (this: FlowLabWorld, arrivalRatePerDay: number) {
+  assert.equal(resultFor(this).config.arrivalRatePerDay, arrivalRatePerDay);
+});
+
+Then("the same seed and arrival rate produce identical daily snapshots", function (this: FlowLabWorld) {
+  const result = resultFor(this);
+  assert.deepEqual(result.snapshots, runScenario(result.config, result.seed).snapshots);
+});
+
+Then("I am told that the arrival rate must be zero or greater", function (this: FlowLabWorld) {
+  assert.equal(this.arrivalRateError, "The arrival rate must be zero or greater.");
+});
+
+Then("the current arrival rate remains unchanged", function (this: FlowLabWorld) {
+  assert.equal(this.config?.arrivalRatePerDay, this.arrivalRateBeforeEdit);
 });
 
 When("I choose {int} seeds for the mean CFD", function (this: FlowLabWorld, seedCount: number) {
