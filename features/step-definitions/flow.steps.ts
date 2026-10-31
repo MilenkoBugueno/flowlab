@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { Given, Then, When, World, setWorldConstructor } from "@cucumber/cucumber";
-import { runScenario } from "../../src/sim/engine";
+import { processingRateFor, runScenario } from "../../src/sim/engine";
 import { scenarios } from "../../src/sim/scenarios";
-import type { ScenarioConfig, SimulationResult } from "../../src/sim/types";
-import { withWorkflow } from "../../src/sim/workflow";
+import { withProcessingRates, withSimulationSettings } from "../../src/sim/settings";
+import type { CapacityIncident, ScenarioConfig, SimulationResult, SwarmPolicy } from "../../src/sim/types";
+import { activeStages, withWorkflow } from "../../src/sim/workflow";
 
 class FlowLabWorld extends World {
   config?: ScenarioConfig;
@@ -12,6 +13,11 @@ class FlowLabWorld extends World {
   baseline?: SimulationResult;
   workflowError?: string;
   workflowBeforeEdit?: ScenarioConfig;
+  capacityError?: string;
+  capacityBeforeEdit?: ScenarioConfig;
+  interventionError?: string;
+  interventionsBeforeEdit?: ScenarioConfig;
+  pendingSwarm?: SwarmPolicy;
 }
 
 setWorldConstructor(FlowLabWorld);
@@ -261,4 +267,140 @@ When("I simulate the workflow twice with seed {int}", function (this: FlowLabWor
 
 Then("both simulations have identical daily movement logs", function (this: FlowLabWorld) {
   assert.deepEqual(resultFor(this).dailyLog, this.secondResult?.dailyLog);
+});
+
+When("I open the capacity allocation controls", function (this: FlowLabWorld) {
+  assert.ok(this.config, "Choose a workflow before editing capacity");
+});
+
+Then("I can set a daily processing rate for Discovery, Development, Review, and Test", function (this: FlowLabWorld) {
+  assert.deepEqual(activeStages(this.config?.workflow ?? { stages: [] }), ["Discovery", "Development", "Review", "Test"]);
+});
+
+Then("I cannot set a daily processing rate for Ready or Done", function (this: FlowLabWorld) {
+  const active = activeStages(this.config?.workflow ?? { stages: [] });
+  assert.ok(!active.includes("Ready") && !active.includes("Done"));
+});
+
+When("I set the daily processing rates to 0.7 for Discovery, 1.2 for Development, 0.8 for Review, and 1.1 for Test", function (this: FlowLabWorld) {
+  assert.ok(this.config, "Choose a workflow before editing capacity");
+  this.config = withProcessingRates(this.config, { Discovery: 0.7, Development: 1.2, Review: 0.8, Test: 1.1 });
+});
+
+When("I run the simulation with seed {int}", function (this: FlowLabWorld, seed: number) {
+  assert.ok(this.config, "Choose a scenario before simulating");
+  this.result = runScenario(this.config, seed);
+});
+
+Then("the simulation uses those daily processing rates for the matching stages", function (this: FlowLabWorld) {
+  const result = resultFor(this);
+  assert.deepEqual(result.config.baseRates, { Discovery: 0.7, Development: 1.2, Review: 0.8, Test: 1.1 });
+});
+
+Then("the same seed and capacity allocation produce identical daily snapshots", function (this: FlowLabWorld) {
+  const result = resultFor(this);
+  assert.deepEqual(result.snapshots, runScenario(result.config, result.seed).snapshots);
+});
+
+Given("I am editing the capacity allocation controls", function (this: FlowLabWorld) {
+  this.config = scenarios.baseline;
+  this.capacityBeforeEdit = this.config;
+});
+
+When("I save a daily processing rate of 0 for Review", function (this: FlowLabWorld) {
+  assert.ok(this.config, "Choose a scenario before editing capacity");
+  try {
+    this.config = withProcessingRates(this.config, { Review: 0 });
+  } catch (error) {
+    this.capacityError = error instanceof Error ? error.message : String(error);
+  }
+});
+
+Then("I am told that a daily processing rate must be greater than zero", function (this: FlowLabWorld) {
+  assert.match(this.capacityError ?? "", /daily processing rate.*greater than zero/i);
+});
+
+Then("the current capacity allocation remains unchanged", function (this: FlowLabWorld) {
+  assert.equal(this.config, this.capacityBeforeEdit);
+});
+
+Given("I am editing the intervention controls", function (this: FlowLabWorld) {
+  this.config = scenarios.baseline;
+  this.interventionsBeforeEdit = this.config;
+});
+
+When("I set an incident in Review from day {int} through day {int} with a daily processing rate of {float}", function (this: FlowLabWorld, startDay: number, endDay: number, ratePerDay: number) {
+  assert.ok(this.config, "Choose a scenario before editing interventions");
+  const incident: CapacityIncident = { stage: "Review", startDay, endDay, ratePerDay };
+  this.config = withSimulationSettings(this.config, { incident });
+});
+
+Then("the simulation applies the configured incident only to Review on days {int} through {int}", function (this: FlowLabWorld, startDay: number, endDay: number) {
+  const result = resultFor(this);
+  assert.equal(result.config.incident.stage, "Review");
+  assert.equal(result.config.incident.startDay, startDay);
+  assert.equal(result.config.incident.endDay, endDay);
+  assert.equal(processingRateFor("Development", startDay, result.config), result.config.baseRates.Development);
+  assert.equal(processingRateFor("Review", startDay - 1, result.config), result.config.baseRates.Review);
+  assert.equal(processingRateFor("Review", endDay + 1, result.config), result.config.baseRates.Review);
+});
+
+Then("Review uses a daily processing rate of {float} while the incident is active", function (this: FlowLabWorld, rate: number) {
+  const result = resultFor(this);
+  assert.equal(processingRateFor("Review", result.config.incident.startDay, result.config), rate);
+  assert.equal(processingRateFor("Review", result.config.incident.endDay, result.config), rate);
+});
+
+When("I set a swarm from Development to Review starting on day {int} for {int} days", function (this: FlowLabWorld, startDay: number, durationDays: number) {
+  this.pendingSwarm = { sourceStage: "Development", targetStage: "Review", startDay, durationDays, capacityShift: 0.5, rampUpEffectiveness: 0.75 };
+});
+
+When("I set the swarm capacity shift to {float} and the first-day effectiveness to {float}", function (this: FlowLabWorld, capacityShift: number, rampUpEffectiveness: number) {
+  assert.ok(this.config, "Choose a scenario before editing interventions");
+  assert.ok(this.pendingSwarm, "Choose a swarm before editing it");
+  this.config = withSimulationSettings(this.config, {
+    swarm: { ...this.pendingSwarm, capacityShift, rampUpEffectiveness },
+  });
+});
+
+Then("the simulation temporarily shifts {float} daily capacity from Development to Review", function (this: FlowLabWorld, shift: number) {
+  const result = resultFor(this);
+  assert.ok(result.config.swarm, "Expected a configured swarm");
+  const steadyDay = result.config.swarm.startDay + 1;
+  assert.equal(processingRateFor("Development", steadyDay, result.config), result.config.baseRates.Development! - shift);
+  assert.equal(processingRateFor("Review", steadyDay, result.config), result.config.baseRates.Review! + shift);
+});
+
+Then("Review receives {float} daily capacity from the swarm on its first day", function (this: FlowLabWorld, contribution: number) {
+  const result = resultFor(this);
+  assert.ok(result.config.swarm, "Expected a configured swarm");
+  const firstDayRate = processingRateFor("Review", result.config.swarm.startDay, result.config);
+  assert.ok(Math.abs(firstDayRate - result.config.baseRates.Review! - contribution) < 1e-9);
+});
+
+Then("the swarm stops after {int} days", function (this: FlowLabWorld, duration: number) {
+  const result = resultFor(this);
+  assert.ok(result.config.swarm, "Expected a configured swarm");
+  const afterSwarm = result.config.swarm.startDay + duration;
+  assert.equal(processingRateFor("Development", afterSwarm, result.config), result.config.baseRates.Development);
+  assert.equal(processingRateFor("Review", afterSwarm, result.config), result.config.baseRates.Review);
+});
+
+When("I save a swarm that starts and ends in the same stage", function (this: FlowLabWorld) {
+  assert.ok(this.config, "Choose a scenario before editing interventions");
+  try {
+    this.config = withSimulationSettings(this.config, {
+      swarm: { sourceStage: "Review", targetStage: "Review", startDay: 45, durationDays: 10, capacityShift: 0.5, rampUpEffectiveness: 0.75 },
+    });
+  } catch (error) {
+    this.interventionError = error instanceof Error ? error.message : String(error);
+  }
+});
+
+Then("I am told that a swarm needs different source and target stages", function (this: FlowLabWorld) {
+  assert.equal(this.interventionError, "A swarm needs different source and target stages.");
+});
+
+Then("the current intervention settings remain unchanged", function (this: FlowLabWorld) {
+  assert.equal(this.config, this.interventionsBeforeEdit);
 });

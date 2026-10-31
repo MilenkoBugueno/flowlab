@@ -57,7 +57,7 @@ export function withWorkflow(config: ScenarioConfig, states: string[]): Scenario
     serviceEffort,
     wipLimits,
     incident: { ...config.incident, stage: incidentStage },
-    swarm: config.swarm && mappedSource && mappedTarget
+    swarm: config.swarm && mappedSource && mappedTarget && mappedSource !== mappedTarget
       ? { ...config.swarm, sourceStage: mappedSource, targetStage: mappedTarget }
       : undefined,
   };

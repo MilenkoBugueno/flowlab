@@ -39,7 +39,7 @@ function nextStage(stage: ActiveStage, stages: Stage[]): Stage {
   return next;
 }
 
-function rateFor(stage: ActiveStage, day: number, config: ScenarioConfig): number {
+export function processingRateFor(stage: ActiveStage, day: number, config: ScenarioConfig): number {
   let rate = config.baseRates[stage] ?? 1;
   if (config.incident.stage === stage && day >= config.incident.startDay && day <= config.incident.endDay) {
     rate = config.incident.ratePerDay;
@@ -144,7 +144,7 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
   const processWork = (day: number, stage: ActiveStage) => {
     const currentlyActive = items.find((item) => item.stage === stage && item.status === "active");
     if (!currentlyActive) return;
-    currentlyActive.effortRemaining -= rateFor(stage, day, config);
+    currentlyActive.effortRemaining -= processingRateFor(stage, day, config);
     if (currentlyActive.effortRemaining > 0) return;
     currentlyActive.effortRemaining = 0;
     currentlyActive.status = "blocked";

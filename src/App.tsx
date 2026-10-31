@@ -3,8 +3,9 @@ import { CfdChart } from "./chart/CfdChart";
 import { DailyLog } from "./DailyLog";
 import { runScenario } from "./sim/engine";
 import { scenarioList, scenarios } from "./sim/scenarios";
-import type { Metrics, ScenarioId } from "./sim/types";
-import { withWorkflow } from "./sim/workflow";
+import { withSimulationSettings } from "./sim/settings";
+import type { CapacityIncident, Metrics, ScenarioId, SwarmPolicy } from "./sim/types";
+import { activeStages, withWorkflow } from "./sim/workflow";
 
 const metricLabels: Array<[keyof Metrics, string, string]> = [
   ["completedItems", "Completed items", "More is better, if cycle time remains healthy."],
@@ -26,12 +27,35 @@ export default function App() {
   const [workflowInput, setWorkflowInput] = useState(scenarios.baseline.workflow.stages.join(", "));
   const [workflow, setWorkflow] = useState(scenarios.baseline.workflow.stages);
   const [workflowError, setWorkflowError] = useState<string>();
+  const [savedRates, setSavedRates] = useState<Record<string, number>>({});
+  const [rateDraft, setRateDraft] = useState<Record<string, string>>({});
+  const [capacityError, setCapacityError] = useState<string>();
+  const [savedIncident, setSavedIncident] = useState<CapacityIncident>();
+  const [savedSwarm, setSavedSwarm] = useState<SwarmPolicy>();
+  const [incidentDraft, setIncidentDraft] = useState<CapacityIncident>();
+  const [swarmDraft, setSwarmDraft] = useState<SwarmPolicy>();
+  const [interventionError, setInterventionError] = useState<string>();
   const seed = Number.isFinite(Number(seedInput)) ? Math.max(0, Math.floor(Number(seedInput))) : 42;
   const baseline = useMemo(() => runScenario(scenarios.baseline, seed), [seed, runKey]);
-  const selectedConfig = useMemo(() => withWorkflow(scenarios[scenarioId], workflow), [scenarioId, workflow]);
+  const workflowConfig = useMemo(() => withWorkflow(scenarios[scenarioId], workflow), [scenarioId, workflow]);
+  const selectedConfig = useMemo(
+    () => withSimulationSettings(workflowConfig, { baseRates: savedRates, incident: savedIncident, swarm: savedSwarm }),
+    [workflowConfig, savedRates, savedIncident, savedSwarm],
+  );
   const selected = useMemo(() => runScenario(selectedConfig, seed), [selectedConfig, seed, runKey]);
   const [selectedDay, setSelectedDay] = useState(50);
   const scenario = scenarios[scenarioId];
+  const activeWorkflowStages = activeStages(workflowConfig.workflow);
+  const incidentForm = incidentDraft ?? savedIncident ?? workflowConfig.incident;
+  const fallbackSwarm: SwarmPolicy = {
+    startDay: 45,
+    durationDays: 10,
+    sourceStage: activeWorkflowStages[0] ?? "",
+    targetStage: activeWorkflowStages[1] ?? activeWorkflowStages[0] ?? "",
+    capacityShift: 0.5,
+    rampUpEffectiveness: 0.75,
+  };
+  const swarmForm = swarmDraft ?? savedSwarm ?? workflowConfig.swarm ?? fallbackSwarm;
 
   const updateScenario = (id: ScenarioId) => {
     setScenarioId(id);
@@ -43,10 +67,53 @@ export default function App() {
       const nextWorkflow = workflowInput.split(",");
       withWorkflow(scenarios[scenarioId], nextWorkflow);
       setWorkflow(nextWorkflow.map((stage) => stage.trim()));
+      setSavedRates({});
+      setRateDraft({});
+      setSavedIncident(undefined);
+      setSavedSwarm(undefined);
+      setIncidentDraft(undefined);
+      setSwarmDraft(undefined);
       setWorkflowError(undefined);
       setSelectedDay(50);
     } catch (error) {
       setWorkflowError(error instanceof Error ? error.message : "Unable to save this workflow.");
+    }
+  };
+
+  const saveRates = () => {
+    try {
+      const rates = Object.fromEntries(activeWorkflowStages.map((stage) => [
+        stage,
+        Number(rateDraft[stage] ?? selectedConfig.baseRates[stage] ?? 1),
+      ]));
+      withSimulationSettings(workflowConfig, { baseRates: rates, incident: savedIncident, swarm: savedSwarm });
+      setSavedRates(rates);
+      setRateDraft({});
+      setCapacityError(undefined);
+    } catch (error) {
+      setCapacityError(error instanceof Error ? error.message : "Unable to save capacity allocation.");
+    }
+  };
+
+  const saveIncident = () => {
+    try {
+      withSimulationSettings(workflowConfig, { baseRates: savedRates, incident: incidentForm, swarm: savedSwarm });
+      setSavedIncident(incidentForm);
+      setIncidentDraft(undefined);
+      setInterventionError(undefined);
+    } catch (error) {
+      setInterventionError(error instanceof Error ? error.message : "Unable to save incident settings.");
+    }
+  };
+
+  const saveSwarm = () => {
+    try {
+      withSimulationSettings(workflowConfig, { baseRates: savedRates, incident: savedIncident, swarm: swarmForm });
+      setSavedSwarm(swarmForm);
+      setSwarmDraft(undefined);
+      setInterventionError(undefined);
+    } catch (error) {
+      setInterventionError(error instanceof Error ? error.message : "Unable to save swarm settings.");
     }
   };
 
@@ -102,6 +169,70 @@ export default function App() {
             </div>
             {workflowError && <p className="workflow-error" role="alert">{workflowError}</p>}
           </section>
+
+          <details className="settings-panel" open>
+            <summary>Capacity allocation</summary>
+            <p>Daily processing rate for each active stage.</p>
+            <div className="rate-list">
+              {activeWorkflowStages.map((stage) => (
+                <label key={stage} htmlFor={`rate-${stage}`}>
+                  <span>{stage}</span>
+                  <input
+                    id={`rate-${stage}`}
+                    type="number"
+                    min="0.01"
+                    step="0.05"
+                    value={rateDraft[stage] ?? String(selectedConfig.baseRates[stage] ?? 1)}
+                    onChange={(event) => setRateDraft((draft) => ({ ...draft, [stage]: event.target.value }))}
+                  />
+                </label>
+              ))}
+            </div>
+            <button type="button" onClick={saveRates}>Save rates</button>
+            {capacityError && <p className="settings-error" role="alert">{capacityError}</p>}
+          </details>
+
+          <details className="settings-panel">
+            <summary>Interventions</summary>
+            <section className="intervention-editor" aria-labelledby="incident-heading">
+              <h2 id="incident-heading">Capacity incident</h2>
+              <label>Stage
+                <select value={incidentForm.stage} onChange={(event) => setIncidentDraft({ ...incidentForm, stage: event.target.value })}>
+                  {activeWorkflowStages.map((stage) => <option key={stage} value={stage}>{stage}</option>)}
+                </select>
+              </label>
+              <div className="compact-fields">
+                <label>Start day<input type="number" min="0" value={incidentForm.startDay} onChange={(event) => setIncidentDraft({ ...incidentForm, startDay: Number(event.target.value) })} /></label>
+                <label>End day<input type="number" min="0" value={incidentForm.endDay} onChange={(event) => setIncidentDraft({ ...incidentForm, endDay: Number(event.target.value) })} /></label>
+              </div>
+              <label>Rate per day<input type="number" min="0.01" step="0.05" value={incidentForm.ratePerDay} onChange={(event) => setIncidentDraft({ ...incidentForm, ratePerDay: Number(event.target.value) })} /></label>
+              <button type="button" onClick={saveIncident}>Save incident</button>
+            </section>
+
+            <section className="intervention-editor" aria-labelledby="swarm-heading">
+              <h2 id="swarm-heading">Swarm</h2>
+              <div className="compact-fields">
+                <label>From
+                  <select value={swarmForm.sourceStage} onChange={(event) => setSwarmDraft({ ...swarmForm, sourceStage: event.target.value })}>
+                    {activeWorkflowStages.map((stage) => <option key={stage} value={stage}>{stage}</option>)}
+                  </select>
+                </label>
+                <label>To
+                  <select value={swarmForm.targetStage} onChange={(event) => setSwarmDraft({ ...swarmForm, targetStage: event.target.value })}>
+                    {activeWorkflowStages.map((stage) => <option key={stage} value={stage}>{stage}</option>)}
+                  </select>
+                </label>
+              </div>
+              <div className="compact-fields">
+                <label>Start day<input type="number" min="0" value={swarmForm.startDay} onChange={(event) => setSwarmDraft({ ...swarmForm, startDay: Number(event.target.value) })} /></label>
+                <label>Days<input type="number" min="1" value={swarmForm.durationDays} onChange={(event) => setSwarmDraft({ ...swarmForm, durationDays: Number(event.target.value) })} /></label>
+              </div>
+              <label>Capacity shift<input type="number" min="0.01" step="0.05" value={swarmForm.capacityShift} onChange={(event) => setSwarmDraft({ ...swarmForm, capacityShift: Number(event.target.value) })} /></label>
+              <label>First-day effectiveness<input type="number" min="0" max="1" step="0.05" value={swarmForm.rampUpEffectiveness} onChange={(event) => setSwarmDraft({ ...swarmForm, rampUpEffectiveness: Number(event.target.value) })} /></label>
+              <button type="button" onClick={saveSwarm}>Save swarm</button>
+            </section>
+            {interventionError && <p className="settings-error" role="alert">{interventionError}</p>}
+          </details>
 
           <details className="model-notes">
             <summary>Model notes</summary>

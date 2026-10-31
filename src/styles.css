@@ -22,7 +22,7 @@ h2 { margin: 0; color: #f0f7fd; font-size: .98rem; letter-spacing: -.015em; }
 .cockpit-workspace { min-height: 0; display: grid; grid-template-columns: 268px minmax(460px, 1fr) 292px; gap: 12px; }
 .control-rail, .inspector-rail { min-height: 0; padding: 3px; overflow-y: auto; scrollbar-color: #405b72 transparent; }
 .control-rail { display: flex; flex-direction: column; gap: 10px; }
-.panel-section, .metrics, .model-notes, .log-drawer { border: 1px solid #223448; border-radius: 10px; background: #111c28; box-shadow: 0 10px 20px rgba(0, 0, 0, .12); }
+.panel-section, .metrics, .model-notes, .log-drawer, .settings-panel { border: 1px solid #223448; border-radius: 10px; background: #111c28; box-shadow: 0 10px 20px rgba(0, 0, 0, .12); }
 .panel-section { padding: 15px; }
 .panel-section h2 { margin-bottom: 12px; }
 
@@ -41,6 +41,7 @@ h2 { margin: 0; color: #f0f7fd; font-size: .98rem; letter-spacing: -.015em; }
 .workflow-editor input { width: 100%; font-size: .76rem; }
 .workflow-editor-controls button { padding-inline: 9px; }
 .workflow-error { margin: 8px 0 0; color: #ff9671 !important; font-size: .78rem; line-height: 1.35; }
+.settings-panel { padding: 12px 14px; }.settings-panel > summary { margin: -1px 0 10px; }.settings-panel > p { margin: 0 0 10px; color: #a9bdce; font-size: .75rem; line-height: 1.35; }.rate-list { display: grid; gap: 7px; margin-bottom: 10px; }.rate-list label, .intervention-editor label { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: #a9bdce; font-size: .75rem; }.rate-list input { width: 82px; padding: 6px 7px; }.settings-panel button { margin-top: 1px; font-size: .75rem; }.settings-error { margin: 9px 0 0; color: #ff9671; font-size: .75rem; line-height: 1.35; }.intervention-editor { display: grid; gap: 8px; padding-top: 11px; border-top: 1px solid #263c4f; }.intervention-editor + .intervention-editor { margin-top: 14px; }.intervention-editor h2 { font-size: .83rem; }.intervention-editor input, .intervention-editor select { width: 96px; padding: 6px 7px; border: 1px solid #34495c; border-radius: 6px; background: #0b1520; color: #e6f1fa; font: inherit; font-size: .75rem; }.intervention-editor > label { width: 100%; }.compact-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }.compact-fields label { display: grid; gap: 4px; align-items: start; }.compact-fields input, .compact-fields select { width: 100%; }
 .model-notes { padding: 12px 14px; color: #a9bdce; font-size: .78rem; line-height: 1.45; }
 summary { cursor: pointer; color: #dce7f2; font-size: .82rem; font-weight: 720; }
 .model-notes p { margin: 10px 0 0; }
