@@ -88,3 +88,90 @@ Then("constrained work remains visible upstream", function (this: FlowLabWorld) 
   const result = resultFor(this);
   assert.ok(result.snapshots.some((snapshot) => snapshot.states.ready > 0 || snapshot.states.development >= 6));
 });
+
+Then("the daily log contains one entry for each simulated working day", function (this: FlowLabWorld) {
+  const result = resultFor(this);
+  assert.equal(result.dailyLog.length, result.config.horizonDays);
+});
+
+Then("each daily entry identifies its simulation day and seed", function (this: FlowLabWorld) {
+  const result = resultFor(this);
+  result.dailyLog.forEach((entry, day) => {
+    assert.equal(entry.day, day);
+    assert.equal(entry.seed, result.seed);
+  });
+});
+
+Then("each daily entry lists the number of items moved between each pair of states", function (this: FlowLabWorld) {
+  const result = resultFor(this);
+  for (const entry of result.dailyLog) {
+    for (const count of Object.values(entry.movements)) assert.ok(Number.isInteger(count) && count >= 0);
+  }
+});
+
+Then("movements into the workflow are recorded as External to Ready", function (this: FlowLabWorld) {
+  const result = resultFor(this);
+  assert.equal(
+    result.dailyLog.reduce((total, entry) => total + entry.movements["external-to-ready"], 0),
+    result.items.length,
+  );
+});
+
+Then("movements through the workflow are recorded as Ready to Development, Development to Review, and Review to Test", function (this: FlowLabWorld) {
+  const result = resultFor(this);
+  assert.ok(result.dailyLog.some((entry) => entry.movements["ready-to-development"] > 0));
+  assert.ok(result.dailyLog.some((entry) => entry.movements["development-to-review"] > 0));
+  assert.ok(result.dailyLog.some((entry) => entry.movements["review-to-test"] > 0));
+});
+
+Then("completed work is recorded as Test to Done", function (this: FlowLabWorld) {
+  const result = resultFor(this);
+  const completions = result.items.filter((item) => item.completedAt !== undefined).length;
+  assert.equal(result.dailyLog.reduce((total, entry) => total + entry.movements["test-to-done"], 0), completions);
+});
+
+Then("a daily entry with no movements is still shown with zero counts", function (this: FlowLabWorld) {
+  const result = resultFor(this);
+  const noMovementEntry = result.dailyLog.find((entry) => Object.values(entry.movements).every((count) => count === 0));
+  assert.ok(noMovementEntry, "Expected at least one day without movement");
+  assert.deepEqual(noMovementEntry.movements, {
+    "external-to-ready": 0,
+    "ready-to-development": 0,
+    "development-to-review": 0,
+    "review-to-test": 0,
+    "test-to-done": 0,
+  });
+});
+
+Then("the sum of all daily External to Ready movements equals the number of arrived items", function (this: FlowLabWorld) {
+  const result = resultFor(this);
+  const arrivals = result.snapshots.reduce((total, snapshot) => total + snapshot.arrivals, 0);
+  const loggedArrivals = result.dailyLog.reduce((total, entry) => total + entry.movements["external-to-ready"], 0);
+  assert.equal(loggedArrivals, arrivals);
+});
+
+Then("the sum of all daily Test to Done movements equals the number of completed items", function (this: FlowLabWorld) {
+  const result = resultFor(this);
+  const completions = result.snapshots.reduce((total, snapshot) => total + snapshot.completions, 0);
+  const loggedCompletions = result.dailyLog.reduce((total, entry) => total + entry.movements["test-to-done"], 0);
+  assert.equal(loggedCompletions, completions);
+});
+
+Then("the daily log movements reproduce the change in each state between consecutive daily snapshots", function (this: FlowLabWorld) {
+  const result = resultFor(this);
+  const prior = { ready: 0, development: 0, review: 0, test: 0, done: 0 };
+  for (const [day, snapshot] of result.snapshots.entries()) {
+    const movements = result.dailyLog[day].movements;
+    const changes = {
+      ready: movements["external-to-ready"] - movements["ready-to-development"],
+      development: movements["ready-to-development"] - movements["development-to-review"],
+      review: movements["development-to-review"] - movements["review-to-test"],
+      test: movements["review-to-test"] - movements["test-to-done"],
+      done: movements["test-to-done"],
+    };
+    for (const stage of Object.keys(prior) as Array<keyof typeof prior>) {
+      assert.equal(snapshot.states[stage] - prior[stage], changes[stage], `State reconciliation failed on day ${day} for ${stage}`);
+      prior[stage] = snapshot.states[stage];
+    }
+  }
+});

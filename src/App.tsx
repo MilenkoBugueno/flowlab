@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { CfdChart } from "./chart/CfdChart";
+import { DailyLog } from "./DailyLog";
 import { runScenario } from "./sim/engine";
 import { scenarioList, scenarios } from "./sim/scenarios";
 import type { Metrics, ScenarioId } from "./sim/types";
@@ -92,6 +93,8 @@ export default function App() {
       </section>
 
       <CfdChart result={selected} selectedDay={selectedDay} onSelectDay={setSelectedDay} />
+
+      <DailyLog entries={selected.dailyLog} seed={selected.seed} />
 
       <section className="explainers">
         <article>

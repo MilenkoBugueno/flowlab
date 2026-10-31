@@ -26,4 +26,24 @@ describe("FlowLab simulation engine", () => {
     const swarm = runScenario(scenarios.swarm, 42);
     expect(swarm.metrics.reviewQueueDays).toBeLessThan(baseline.metrics.reviewQueueDays);
   });
+
+  it("records daily movements that reconcile with the CFD states", () => {
+    const result = runScenario(scenarios.baseline, 42);
+    expect(result.dailyLog).toHaveLength(result.config.horizonDays);
+    const prior = { ready: 0, development: 0, review: 0, test: 0, done: 0 };
+    result.snapshots.forEach((snapshot, day) => {
+      const movements = result.dailyLog[day].movements;
+      const changes = {
+        ready: movements["external-to-ready"] - movements["ready-to-development"],
+        development: movements["ready-to-development"] - movements["development-to-review"],
+        review: movements["development-to-review"] - movements["review-to-test"],
+        test: movements["review-to-test"] - movements["test-to-done"],
+        done: movements["test-to-done"],
+      };
+      (Object.keys(prior) as Array<keyof typeof prior>).forEach((stage) => {
+        expect(snapshot.states[stage] - prior[stage]).toBe(changes[stage]);
+        prior[stage] = snapshot.states[stage];
+      });
+    });
+  });
 });

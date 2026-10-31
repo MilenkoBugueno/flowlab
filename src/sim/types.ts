@@ -3,6 +3,7 @@ export type Stage = (typeof stages)[number];
 export type ActiveStage = Exclude<Stage, "ready" | "done">;
 export type ItemStatus = "waiting" | "active" | "blocked" | "done";
 export type ScenarioId = "baseline" | "swarm" | "wip" | "combined";
+export type MovementRoute = "external-to-ready" | "ready-to-development" | "development-to-review" | "review-to-test" | "test-to-done";
 
 export interface CapacityIncident {
   stage: ActiveStage;
@@ -64,6 +65,12 @@ export interface DailySnapshot {
   externalBacklog: number;
 }
 
+export interface DailyLogEntry {
+  day: number;
+  seed: number;
+  movements: Record<MovementRoute, number>;
+}
+
 export interface Metrics {
   completedItems: number;
   throughputPerWeek: number;
@@ -82,5 +89,6 @@ export interface SimulationResult {
   items: WorkItem[];
   events: FlowEvent[];
   snapshots: DailySnapshot[];
+  dailyLog: DailyLogEntry[];
   metrics: Metrics;
 }

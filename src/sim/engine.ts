@@ -1,10 +1,12 @@
 import { between, createSeededRandom, poisson } from "./random";
 import type {
   ActiveStage,
+  DailyLogEntry,
   DailySnapshot,
   FlowEvent,
   ItemStatus,
   Metrics,
+  MovementRoute,
   ScenarioConfig,
   SimulationResult,
   Stage,
@@ -14,6 +16,17 @@ import type {
 const activeStages: ActiveStage[] = ["development", "review", "test"];
 const emptyStages = (): Record<Stage, number> => ({ ready: 0, development: 0, review: 0, test: 0, done: 0 });
 const emptyActive = (): Record<ActiveStage, number> => ({ development: 0, review: 0, test: 0 });
+const emptyMovements = (): Record<MovementRoute, number> => ({
+  "external-to-ready": 0,
+  "ready-to-development": 0,
+  "development-to-review": 0,
+  "review-to-test": 0,
+  "test-to-done": 0,
+});
+
+function movementRoute(from: Stage | "external", to: Stage): MovementRoute {
+  return `${from}-to-${to}` as MovementRoute;
+}
 
 function percentile(values: number[], proportion: number): number | null {
   if (!values.length) return null;
@@ -59,10 +72,15 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
   const items: WorkItem[] = [];
   const events: FlowEvent[] = [];
   const snapshots: DailySnapshot[] = [];
+  const dailyLog: DailyLogEntry[] = [];
   let itemNumber = 0;
 
   const record = (day: number, type: FlowEvent["type"], item: WorkItem, stage: Stage) => {
     events.push({ day, type, itemId: item.id, stage });
+  };
+
+  const recordMovement = (day: number, from: Stage | "external", to: Stage) => {
+    dailyLog[day].movements[movementRoute(from, to)] += 1;
   };
 
   const setEffort = (item: WorkItem, stage: ActiveStage) => {
@@ -71,11 +89,13 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
   };
 
   const enter = (day: number, item: WorkItem, stage: ActiveStage) => {
+    const from = item.stage;
     item.stage = stage;
     item.status = "waiting";
     item.enteredAt[stage] = day;
     setEffort(item, stage);
     record(day, "entered-stage", item, stage);
+    recordMovement(day, from, stage);
   };
 
   const moveBlocked = (day: number, from: ActiveStage) => {
@@ -89,6 +109,7 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
         item.status = "done";
         item.completedAt = day;
         record(day, "completed", item, "done");
+        recordMovement(day, from, "done");
       } else if (canEnter(items, target, config)) {
         enter(day, item, target);
       }
@@ -125,6 +146,7 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
   };
 
   for (let day = 0; day < config.horizonDays; day += 1) {
+    dailyLog.push({ day, seed, movements: emptyMovements() });
     const arrivals = poisson(config.arrivalRatePerDay, random) + (config.batchDays.includes(day) ? config.batchSize : 0);
     for (let arrival = 0; arrival < arrivals; arrival += 1) {
       const item: WorkItem = {
@@ -138,6 +160,7 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
       };
       items.push(item);
       record(day, "arrival", item, "ready");
+      recordMovement(day, "external", "ready");
     }
 
     // Stable daily event order: completed work moves, policies are implicit in rates,
@@ -168,7 +191,7 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
     });
   }
 
-  return { config, seed, items, events, snapshots, metrics: calculateMetrics(items, snapshots, config) };
+  return { config, seed, items, events, snapshots, dailyLog, metrics: calculateMetrics(items, snapshots, config) };
 }
 
 export function calculateMetrics(items: WorkItem[], snapshots: DailySnapshot[], config: ScenarioConfig): Metrics {
