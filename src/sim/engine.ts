@@ -131,15 +131,15 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
     }
   };
 
-  const processWork = (day: number, stage: ActiveStage) => {
-    let remainingCapacity = processingRateFor(stage, day, config);
+  const processWork = (day: number, stage: ActiveStage, availableCapacity: number): number => {
+    let remainingCapacity = availableCapacity;
     while (remainingCapacity > 0) {
       let currentlyActive = items.find((item) => item.stage === stage && item.status === "active");
       if (!currentlyActive) {
         currentlyActive = items
           .filter((item) => item.stage === stage && item.status === "waiting")
           .sort((a, b) => (a.enteredAt[stage] ?? 0) - (b.enteredAt[stage] ?? 0))[0];
-        if (!currentlyActive) return;
+        if (!currentlyActive) return remainingCapacity;
         currentlyActive.status = "active";
         currentlyActive.startedAt[stage] = day;
         record(day, "started", currentlyActive, stage);
@@ -147,11 +147,12 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
       const effortApplied = Math.min(currentlyActive.effortRemaining, remainingCapacity);
       currentlyActive.effortRemaining -= effortApplied;
       remainingCapacity -= effortApplied;
-      if (currentlyActive.effortRemaining > 0) return;
+      if (currentlyActive.effortRemaining > 0) return 0;
       currentlyActive.effortRemaining = 0;
       currentlyActive.status = "blocked";
       record(day, "blocked", currentlyActive, stage);
     }
+    return 0;
   };
 
   for (let day = 0; day < config.horizonDays; day += 1) {
@@ -176,7 +177,22 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
     // admissions/pulls happen, then available stages begin work.
     [...active].reverse().forEach((stage) => moveBlocked(day, stage));
     pullEntryWork(day);
-    active.forEach((stage) => processWork(day, stage));
+    const unusedCapacity = Object.fromEntries(
+      active.map((stage) => [stage, processWork(day, stage, processingRateFor(stage, day, config))]),
+    );
+    const capacityAssistance = [];
+    const effectiveness = config.wipAssistanceEffectiveness ?? 0.75;
+    for (const sourceStage of active) {
+      if (config.wipLimits?.[sourceStage] === undefined || unusedCapacity[sourceStage] <= 0) continue;
+      const targetStage = nextStage(sourceStage, stages);
+      if (!active.includes(targetStage)) continue;
+      const offeredCapacity = unusedCapacity[sourceStage] * effectiveness;
+      const unusedAssistance = processWork(day, targetStage, offeredCapacity);
+      const appliedCapacity = offeredCapacity - unusedAssistance;
+      if (appliedCapacity > 0) {
+        capacityAssistance.push({ from: sourceStage, to: targetStage, capacity: appliedCapacity, effectiveness });
+      }
+    }
 
     const states = emptyStages(stages);
     const activeCounts = emptyActive(active);
@@ -194,6 +210,7 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
       arrivals,
       completions: items.filter((item) => item.completedAt === day).length,
       externalBacklog: 0,
+      capacityAssistance,
     });
   }
 

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { runScenario } from "./engine";
 import { runMeanScenario, validateMeanSeedCount } from "./mean";
 import { scenarios } from "./scenarios";
+import { validateWipAssistanceEffectiveness } from "./settings";
 import { withWorkflow } from "./workflow";
 
 describe("FlowLab simulation engine", () => {
@@ -92,5 +93,44 @@ describe("FlowLab simulation engine", () => {
   it("rejects an invalid mean CFD seed count", () => {
     expect(() => validateMeanSeedCount(0)).toThrow("The mean CFD seed count must be a positive whole number.");
     expect(() => validateMeanSeedCount(2.5)).toThrow("The mean CFD seed count must be a positive whole number.");
+  });
+
+  it("uses unused WIP-limited Development capacity to help Test at the configured effectiveness", () => {
+    const config = {
+      ...scenarios.wip,
+      horizonDays: 2,
+      warmupDays: 0,
+      arrivalRatePerDay: 0,
+      batchDays: [0],
+      batchSize: 1,
+      baseRates: { Development: 0.4, Test: 0.1 },
+      serviceEffort: { Development: { min: 0.4, max: 0.4 }, Test: { min: 3, max: 3 } },
+      wipLimits: { Development: 1, Test: 1 },
+      wipAssistanceEffectiveness: 0.75,
+    };
+    const result = runScenario(config, 1);
+    const assistance = result.snapshots[1].capacityAssistance?.[0];
+    expect(assistance).toMatchObject({ from: "Development", to: "Test", effectiveness: 0.75 });
+    expect(assistance?.capacity).toBeCloseTo(0.3);
+  });
+
+  it("does not assist Test when Development uses all of its capacity", () => {
+    const config = {
+      ...scenarios.wip,
+      horizonDays: 2,
+      warmupDays: 0,
+      arrivalRatePerDay: 0,
+      batchDays: [0],
+      batchSize: 4,
+      baseRates: { Development: 1.4, Test: 0.1 },
+      serviceEffort: { Development: { min: 1, max: 1 }, Test: { min: 5, max: 5 } },
+      wipLimits: { Development: 4, Test: 4 },
+    };
+    const result = runScenario(config, 1);
+    expect(result.snapshots.flatMap((snapshot) => snapshot.capacityAssistance ?? [])).toEqual([]);
+  });
+
+  it("rejects WIP assistance effectiveness outside the supported range", () => {
+    expect(() => validateWipAssistanceEffectiveness(1.1)).toThrow("WIP assistance effectiveness must be between zero and one.");
   });
 });

@@ -8,6 +8,7 @@ const common = {
   batchDays: [24, 56, 88],
   batchSize: 2,
   workflow: defaultWorkflow,
+  wipAssistanceEffectiveness: 0.75,
   baseRates: {
     Development: 1.4,
     Test: 0.7,

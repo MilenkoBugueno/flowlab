@@ -36,6 +36,7 @@ export interface ScenarioConfig {
   baseRates: Partial<Record<ActiveStage, number>>;
   serviceEffort: Partial<Record<ActiveStage, { min: number; max: number }>>;
   wipLimits?: Partial<Record<ActiveStage, number>>;
+  wipAssistanceEffectiveness?: number;
   incident?: CapacityIncident;
   swarm?: SwarmPolicy;
 }
@@ -66,6 +67,14 @@ export interface DailySnapshot {
   arrivals: number;
   completions: number;
   externalBacklog: number;
+  capacityAssistance?: CapacityAssistance[];
+}
+
+export interface CapacityAssistance {
+  from: ActiveStage;
+  to: ActiveStage;
+  capacity: number;
+  effectiveness: number;
 }
 
 export interface DailyMovement {

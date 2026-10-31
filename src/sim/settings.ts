@@ -26,6 +26,13 @@ export function withArrivalRate(config: ScenarioConfig, arrivalRatePerDay: numbe
   return { ...config, arrivalRatePerDay };
 }
 
+export function validateWipAssistanceEffectiveness(effectiveness: number): number {
+  if (!Number.isFinite(effectiveness) || effectiveness < 0 || effectiveness > 1) {
+    throw new Error("WIP assistance effectiveness must be between zero and one.");
+  }
+  return effectiveness;
+}
+
 export function validateIncident(config: ScenarioConfig, incident: CapacityIncident): CapacityIncident {
   const active = activeStages(config.workflow);
   assertActiveStage(incident.stage, active, "The incident stage");
@@ -56,6 +63,7 @@ export function validateSwarm(config: ScenarioConfig, swarm: SwarmPolicy): Swarm
 
 export interface SimulationSettings {
   arrivalRatePerDay?: number;
+  wipAssistanceEffectiveness?: number;
   baseRates?: Partial<Record<ActiveStage, number>>;
   incident?: CapacityIncident;
   swarm?: SwarmPolicy;
@@ -66,11 +74,14 @@ export function withSimulationSettings(config: ScenarioConfig, settings: Simulat
     ? config
     : withArrivalRate(config, settings.arrivalRatePerDay);
   const withRates = withProcessingRates(withArrival, settings.baseRates ?? {});
+  const wipAssistanceEffectiveness = settings.wipAssistanceEffectiveness === undefined
+    ? (withRates.wipAssistanceEffectiveness ?? 0.75)
+    : validateWipAssistanceEffectiveness(settings.wipAssistanceEffectiveness);
   const active = activeStages(withRates.workflow);
   const incident = settings.incident
     ? validateIncident(withRates, settings.incident)
     : withRates.incident;
   const swarm = settings.swarm ?? withRates.swarm;
   if (swarm && active.length >= 2) validateSwarm(withRates, swarm);
-  return { ...withRates, incident, swarm: active.length >= 2 ? swarm : undefined };
+  return { ...withRates, wipAssistanceEffectiveness, incident, swarm: active.length >= 2 ? swarm : undefined };
 }

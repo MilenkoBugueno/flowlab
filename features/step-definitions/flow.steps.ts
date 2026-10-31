@@ -27,6 +27,8 @@ class FlowLabWorld extends World {
   meanSeedCountBeforeEdit?: number;
   arrivalRateError?: string;
   arrivalRateBeforeEdit?: number;
+  wipAssistanceError?: string;
+  wipAssistanceBeforeEdit?: number;
 }
 
 setWorldConstructor(FlowLabWorld);
@@ -50,6 +52,63 @@ function hasRoute(result: SimulationResult, from: string, to: string): boolean {
 function meanResultFor(world: FlowLabWorld): MeanSimulationResult {
   assert.ok(world.meanResult, "Expected a completed mean simulation");
   return world.meanResult;
+}
+
+function wipPullConfig(): ScenarioConfig {
+  return {
+    ...scenarios.wip,
+    horizonDays: 3,
+    warmupDays: 0,
+    arrivalRatePerDay: 0,
+    batchDays: [0],
+    batchSize: 3,
+    baseRates: { Development: 1, Test: 0.1 },
+    serviceEffort: { Development: { min: 1, max: 1 }, Test: { min: 5, max: 5 } },
+    wipLimits: { Development: 2, Test: 3 },
+  };
+}
+
+function downstreamWipConfig(): ScenarioConfig {
+  return {
+    ...scenarios.wip,
+    horizonDays: 3,
+    warmupDays: 0,
+    arrivalRatePerDay: 0,
+    batchDays: [0],
+    batchSize: 3,
+    baseRates: { Development: 3, Test: 0.1 },
+    serviceEffort: { Development: { min: 1, max: 1 }, Test: { min: 5, max: 5 } },
+    wipLimits: { Development: 3, Test: 1 },
+  };
+}
+
+function assistanceConfig(effectiveness = 0.75): ScenarioConfig {
+  return {
+    ...scenarios.wip,
+    horizonDays: 2,
+    warmupDays: 0,
+    arrivalRatePerDay: 0,
+    batchDays: [0],
+    batchSize: 1,
+    baseRates: { Development: 0.4, Test: 0.1 },
+    serviceEffort: { Development: { min: 0.4, max: 0.4 }, Test: { min: 3, max: 3 } },
+    wipLimits: { Development: 1, Test: 1 },
+    wipAssistanceEffectiveness: effectiveness,
+  };
+}
+
+function fullyUtilizedWipConfig(): ScenarioConfig {
+  return {
+    ...scenarios.wip,
+    horizonDays: 2,
+    warmupDays: 0,
+    arrivalRatePerDay: 0,
+    batchDays: [0],
+    batchSize: 4,
+    baseRates: { Development: 1.4, Test: 0.1 },
+    serviceEffort: { Development: { min: 1, max: 1 }, Test: { min: 5, max: 5 } },
+    wipLimits: { Development: 4, Test: 4 },
+  };
 }
 
 Given("the standard FlowLab baseline scenario", function (this: FlowLabWorld) {
@@ -565,4 +624,133 @@ Then("I am told that the mean CFD seed count must be a positive whole number", f
 
 Then("the current mean CFD seed count remains unchanged", function (this: FlowLabWorld) {
   assert.equal(this.meanSeedCount, this.meanSeedCountBeforeEdit);
+});
+
+Given("a workflow with a Development WIP limit of 2", function (this: FlowLabWorld) {
+  this.config = wipPullConfig();
+});
+
+Given("Development already contains 2 items", function (this: FlowLabWorld) {
+  assert.equal(this.config?.wipLimits?.Development, 2);
+});
+
+When("another item is ready to enter Development", function (this: FlowLabWorld) {
+  assert.ok(this.config, "Expected a WIP-limited workflow");
+  this.result = runScenario(this.config, 1);
+});
+
+Then("the item remains in Backlog", function (this: FlowLabWorld) {
+  assert.ok((resultFor(this).snapshots[0].states.Backlog ?? 0) > 0);
+});
+
+Then("the item is pulled into Development only after a Development slot becomes free", function (this: FlowLabWorld) {
+  const developmentEntries = resultFor(this).events.filter((event) => event.type === "entered-stage" && event.stage === "Development");
+  assert.equal(developmentEntries.filter((event) => event.day === 0).length, 2);
+  assert.ok(developmentEntries.some((event) => event.day > 0));
+});
+
+Given("a workflow with Development and Test WIP limits", function (this: FlowLabWorld) {
+  this.config = downstreamWipConfig();
+});
+
+Given("Test has reached its WIP limit", function (this: FlowLabWorld) {
+  assert.equal(this.config?.wipLimits?.Test, 1);
+});
+
+When("Development completes an item that is ready for Test", function (this: FlowLabWorld) {
+  assert.ok(this.config, "Expected a WIP-limited workflow");
+  this.result = runScenario(this.config, 1);
+});
+
+Then("the item remains in Development until Test has a free slot", function (this: FlowLabWorld) {
+  assert.ok((resultFor(this).snapshots[1].states.Development ?? 0) > 0);
+});
+
+Then("no item enters Test above its WIP limit", function (this: FlowLabWorld) {
+  const result = resultFor(this);
+  const limit = result.config.wipLimits?.Test ?? 0;
+  assert.ok(result.snapshots.every((snapshot) => snapshot.states.Test <= limit));
+});
+
+Given("Development has a WIP limit and unused daily processing capacity", function (this: FlowLabWorld) {
+  this.config = assistanceConfig();
+});
+
+Given("Test has work waiting to be processed", function (this: FlowLabWorld) {
+  assert.ok(this.config?.wipLimits?.Test !== undefined);
+});
+
+When("I simulate a working day with the default WIP assistance effectiveness", function (this: FlowLabWorld) {
+  assert.ok(this.config, "Expected a WIP-limited workflow");
+  this.result = runScenario(this.config, 1);
+});
+
+Then("Development serves its own work before helping Test", function (this: FlowLabWorld) {
+  const result = resultFor(this);
+  assert.ok(result.events.some((event) => event.stage === "Development" && event.type === "blocked"));
+  assert.ok(result.snapshots.some((snapshot) => snapshot.capacityAssistance?.some((assistance) => assistance.from === "Development")));
+});
+
+Then("the unused Development capacity is applied to Test at {float} effectiveness", function (this: FlowLabWorld, effectiveness: number) {
+  const assistance = resultFor(this).snapshots.flatMap((snapshot) => snapshot.capacityAssistance ?? []).find((entry) => entry.from === "Development" && entry.to === "Test");
+  assert.ok(assistance, "Expected Development to assist Test");
+  assert.equal(assistance.effectiveness, effectiveness);
+  assert.ok(Math.abs(assistance.capacity - 0.4 * effectiveness) < 1e-9);
+});
+
+Then("the assistance only helps the next active stage, Test", function (this: FlowLabWorld) {
+  const assistance = resultFor(this).snapshots.flatMap((snapshot) => snapshot.capacityAssistance ?? []);
+  assert.ok(assistance.every((entry) => entry.from === "Development" && entry.to === "Test"));
+});
+
+Given("Development has a WIP limit and enough work to use all of its daily processing capacity", function (this: FlowLabWorld) {
+  this.config = fullyUtilizedWipConfig();
+});
+
+Then("Development does not provide capacity assistance to Test", function (this: FlowLabWorld) {
+  const assistance = resultFor(this).snapshots.flatMap((snapshot) => snapshot.capacityAssistance ?? []);
+  assert.ok(!assistance.some((entry) => entry.from === "Development" && entry.to === "Test"));
+});
+
+Given("I am editing the WIP limit settings", function (this: FlowLabWorld) {
+  this.config = assistanceConfig();
+  this.wipAssistanceBeforeEdit = this.config.wipAssistanceEffectiveness;
+});
+
+When("I set the WIP assistance effectiveness to {float}", function (this: FlowLabWorld, effectiveness: number) {
+  assert.ok(this.config, "Expected a WIP-limited workflow");
+  this.config = withSimulationSettings(this.config, { wipAssistanceEffectiveness: effectiveness });
+});
+
+Given("Development has {float} unused daily processing capacity", function (this: FlowLabWorld, capacity: number) {
+  assert.equal(this.config?.baseRates.Development, capacity);
+});
+
+When("I simulate a working day with a WIP assistance effectiveness of {float}", function (this: FlowLabWorld, effectiveness: number) {
+  assert.ok(this.config, "Expected a WIP-limited workflow");
+  assert.equal(this.config.wipAssistanceEffectiveness, effectiveness);
+  this.result = runScenario(this.config, 1);
+});
+
+Then("Test receives {float} daily processing capacity from Development", function (this: FlowLabWorld, capacity: number) {
+  const assistance = resultFor(this).snapshots.flatMap((snapshot) => snapshot.capacityAssistance ?? []).find((entry) => entry.from === "Development" && entry.to === "Test");
+  assert.ok(assistance, "Expected Development to assist Test");
+  assert.ok(Math.abs(assistance.capacity - capacity) < 1e-9);
+});
+
+When("I save a WIP assistance effectiveness of {float}", function (this: FlowLabWorld, effectiveness: number) {
+  assert.ok(this.config, "Expected a WIP-limited workflow");
+  try {
+    this.config = withSimulationSettings(this.config, { wipAssistanceEffectiveness: effectiveness });
+  } catch (error) {
+    this.wipAssistanceError = error instanceof Error ? error.message : String(error);
+  }
+});
+
+Then("I am told that WIP assistance effectiveness must be between zero and one", function (this: FlowLabWorld) {
+  assert.equal(this.wipAssistanceError, "WIP assistance effectiveness must be between zero and one.");
+});
+
+Then("the current WIP assistance settings remain unchanged", function (this: FlowLabWorld) {
+  assert.equal(this.config?.wipAssistanceEffectiveness, this.wipAssistanceBeforeEdit);
 });

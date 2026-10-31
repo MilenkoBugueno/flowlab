@@ -26,6 +26,8 @@ export default function App() {
   const [seedInput, setSeedInput] = useState("42");
   const [arrivalRateInput, setArrivalRateInput] = useState(String(scenarios.baseline.arrivalRatePerDay));
   const [savedArrivalRate, setSavedArrivalRate] = useState(scenarios.baseline.arrivalRatePerDay);
+  const [wipAssistanceInput, setWipAssistanceInput] = useState(String(scenarios.baseline.wipAssistanceEffectiveness ?? 0.75));
+  const [savedWipAssistanceEffectiveness, setSavedWipAssistanceEffectiveness] = useState(scenarios.baseline.wipAssistanceEffectiveness ?? 0.75);
   const [arrivalRateError, setArrivalRateError] = useState<string>();
   const [meanSeedCountInput, setMeanSeedCountInput] = useState("1");
   const [meanSeedCount, setMeanSeedCount] = useState(1);
@@ -45,12 +47,12 @@ export default function App() {
   const seed = Number.isFinite(Number(seedInput)) ? Math.max(0, Math.floor(Number(seedInput))) : 42;
   const workflowConfig = useMemo(() => withWorkflow(scenarios[scenarioId], workflow), [scenarioId, workflow]);
   const selectedConfig = useMemo(
-    () => withSimulationSettings(workflowConfig, { arrivalRatePerDay: savedArrivalRate, baseRates: savedRates, incident: savedIncident, swarm: savedSwarm }),
-    [workflowConfig, savedArrivalRate, savedRates, savedIncident, savedSwarm],
+    () => withSimulationSettings(workflowConfig, { arrivalRatePerDay: savedArrivalRate, wipAssistanceEffectiveness: savedWipAssistanceEffectiveness, baseRates: savedRates, incident: savedIncident, swarm: savedSwarm }),
+    [workflowConfig, savedArrivalRate, savedWipAssistanceEffectiveness, savedRates, savedIncident, savedSwarm],
   );
   const baselineConfig = useMemo(
-    () => withSimulationSettings(scenarios.baseline, { arrivalRatePerDay: savedArrivalRate }),
-    [savedArrivalRate],
+    () => withSimulationSettings(scenarios.baseline, { arrivalRatePerDay: savedArrivalRate, wipAssistanceEffectiveness: savedWipAssistanceEffectiveness }),
+    [savedArrivalRate, savedWipAssistanceEffectiveness],
   );
   const baseline = useMemo(
     () => meanSeedCount === 1 ? runScenario(baselineConfig, seed) : runMeanScenario(baselineConfig, meanSeedCount, seed),
@@ -106,12 +108,14 @@ export default function App() {
   const saveRates = () => {
     try {
       const arrivalRate = Number(arrivalRateInput);
+      const wipAssistanceEffectiveness = Number(wipAssistanceInput);
       const rates = Object.fromEntries(activeWorkflowStages.map((stage) => [
         stage,
         Number(rateDraft[stage] ?? selectedConfig.baseRates[stage] ?? 1),
       ]));
-      withSimulationSettings(workflowConfig, { arrivalRatePerDay: arrivalRate, baseRates: rates, incident: savedIncident, swarm: savedSwarm });
+      withSimulationSettings(workflowConfig, { arrivalRatePerDay: arrivalRate, wipAssistanceEffectiveness, baseRates: rates, incident: savedIncident, swarm: savedSwarm });
       setSavedArrivalRate(arrivalRate);
+      setSavedWipAssistanceEffectiveness(wipAssistanceEffectiveness);
       setSavedRates(rates);
       setRateDraft({});
       setCapacityError(undefined);
@@ -226,6 +230,10 @@ export default function App() {
             <label className="arrival-rate-field" htmlFor="arrival-rate">
               <span>Average arrivals / day</span>
               <input id="arrival-rate" type="number" min="0" step="0.1" value={arrivalRateInput} onChange={(event) => setArrivalRateInput(event.target.value)} />
+            </label>
+            <label className="arrival-rate-field" htmlFor="wip-assistance-effectiveness">
+              <span>WIP assistance effectiveness</span>
+              <input id="wip-assistance-effectiveness" type="number" min="0" max="1" step="0.05" value={wipAssistanceInput} onChange={(event) => setWipAssistanceInput(event.target.value)} />
             </label>
             <div className="rate-list">
               {activeWorkflowStages.map((stage) => (
