@@ -51,101 +51,99 @@ export default function App() {
   };
 
   return (
-    <main>
-      <header className="hero">
+    <main className="cockpit">
+      <header className="topbar">
         <div>
-          <p className="eyebrow">FlowLab · v1 prototype</p>
-          <h1>See where product work is waiting—and what changes the flow.</h1>
-          <p className="lede">A transparent simulation lab for comparing bottlenecks, swarming, and WIP limits. Every result uses the same seeded demand stream.</p>
-        </div>
-        <div className="seed-control">
-          <label htmlFor="seed">Simulation seed</label>
-          <div>
-            <input id="seed" value={seedInput} onChange={(event) => setSeedInput(event.target.value)} inputMode="numeric" />
-            <button type="button" onClick={() => setRunKey((value) => value + 1)}>Run simulation</button>
-          </div>
-          <small>Use the same seed to make a fair comparison.</small>
+          <p className="eyebrow">FlowLab · simulation cockpit</p>
+          <h1>Product flow</h1>
         </div>
       </header>
 
-      <section className="scenario-section" aria-labelledby="scenario-heading">
-        <div>
-          <p className="eyebrow">Choose an intervention</p>
-          <h2 id="scenario-heading">What should FlowLab test?</h2>
-        </div>
-        <div className="scenario-tabs" role="tablist" aria-label="Simulation scenarios">
-          {scenarioList.map((entry) => (
-            <button
-              key={entry.id}
-              type="button"
-              role="tab"
-              aria-selected={entry.id === scenarioId}
-              className={entry.id === scenarioId ? "active" : ""}
-              onClick={() => updateScenario(entry.id)}
-            >
-              {entry.label}
-            </button>
-          ))}
-        </div>
-        <p className="scenario-summary"><strong>{scenario.label}:</strong> {scenario.summary}</p>
-      </section>
+      <div className="cockpit-workspace">
+        <aside className="control-rail" aria-label="Simulation controls">
+          <section className="panel-section seed-control">
+            <p className="eyebrow">Run</p>
+            <label htmlFor="seed">Simulation seed</label>
+            <div>
+              <input id="seed" value={seedInput} onChange={(event) => setSeedInput(event.target.value)} inputMode="numeric" />
+              <button type="button" onClick={() => setRunKey((value) => value + 1)}>Run</button>
+            </div>
+            <small>Keep the seed to compare scenarios fairly.</small>
+          </section>
 
-      <section className="workflow-editor" aria-labelledby="workflow-heading">
-        <div>
-          <p className="eyebrow">Customize the flow</p>
-          <h2 id="workflow-heading">Workflow states</h2>
-          <p>Enter states in the order work moves through them, separated by commas. The first state receives work and the last state completes it.</p>
-        </div>
-        <div>
-          <label htmlFor="workflow-states">Workflow</label>
-          <div className="workflow-editor-controls">
-            <input id="workflow-states" value={workflowInput} onChange={(event) => setWorkflowInput(event.target.value)} />
-            <button type="button" onClick={saveWorkflow}>Save workflow</button>
-          </div>
-          {workflowError && <p className="workflow-error" role="alert">{workflowError}</p>}
-        </div>
-      </section>
+          <section className="panel-section scenario-section" aria-labelledby="scenario-heading">
+            <p className="eyebrow">Intervention</p>
+            <h2 id="scenario-heading">Scenario</h2>
+            <div className="scenario-tabs" role="tablist" aria-label="Simulation scenarios">
+              {scenarioList.map((entry) => (
+                <button
+                  key={entry.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={entry.id === scenarioId}
+                  className={entry.id === scenarioId ? "active" : ""}
+                  onClick={() => updateScenario(entry.id)}
+                >
+                  {entry.label}
+                </button>
+              ))}
+            </div>
+            <p className="scenario-summary">{scenario.summary}</p>
+          </section>
 
-      <section className="metrics" aria-label="Scenario comparison">
-        {metricLabels.map(([key, label, help]) => {
-          const value = selected.metrics[key];
-          const baselineValue = baseline.metrics[key];
-          const delta = Number(value ?? 0) - Number(baselineValue ?? 0);
-          const higherIsBetter = key === "completedItems";
-          const comparisonClass = delta === 0 ? "neutral" : (higherIsBetter ? delta > 0 : delta < 0) ? "improved" : "worse";
-          return (
-            <article key={key} title={help}>
-              <span>{label}</span>
-              <strong>{formatMetric(key, value)}</strong>
-              <small className={comparisonClass}>
-                {scenarioId === "baseline" ? "Reference scenario" : `${delta > 0 ? "+" : ""}${formatMetric(key, delta)} vs baseline`}
-              </small>
-            </article>
-          );
-        })}
-      </section>
+          <section className="panel-section workflow-editor" aria-labelledby="workflow-heading">
+            <p className="eyebrow">Customize</p>
+            <h2 id="workflow-heading">Workflow</h2>
+            <p>States in flow order, separated by commas.</p>
+            <label htmlFor="workflow-states">Workflow states</label>
+            <div className="workflow-editor-controls">
+              <input id="workflow-states" value={workflowInput} onChange={(event) => setWorkflowInput(event.target.value)} />
+              <button type="button" onClick={saveWorkflow}>Save</button>
+            </div>
+            {workflowError && <p className="workflow-error" role="alert">{workflowError}</p>}
+          </section>
 
-      <CfdChart result={selected} selectedDay={selectedDay} onSelectDay={setSelectedDay} />
+          <details className="model-notes">
+            <summary>Model notes</summary>
+            <p>Swarming reassigns Development capacity. WIP limits keep constrained work visibly upstream.</p>
+            <p>Compare cycle time, completions, and queue-days—not just the shape of the CFD.</p>
+          </details>
+        </aside>
 
-      <DailyLog entries={selected.dailyLog} stages={selected.config.workflow.stages} seed={selected.seed} />
+        <section className="cfd-canvas" aria-label="Cumulative flow diagram workspace">
+          <CfdChart result={selected} selectedDay={selectedDay} onSelectDay={setSelectedDay} />
+        </section>
 
-      <section className="explainers">
-        <article>
-          <p className="eyebrow">How to read this</p>
-          <h2>A widening band means work is accumulating.</h2>
-          <p>The height of each band is work in that state. The gap between arrivals and completed work is the queue the team is carrying.</p>
-        </article>
-        <article>
-          <p className="eyebrow">Model assumptions</p>
-          <h2>No hidden capacity.</h2>
-          <p>Swarming temporarily removes capacity from Development. WIP limits prevent work from entering a full state, so it stays visibly upstream rather than disappearing.</p>
-        </article>
-        <article>
-          <p className="eyebrow">Check the trade-off</p>
-          <h2>Don’t judge a prettier chart alone.</h2>
-          <p>Compare tail cycle time, completions, and queue-days. A useful intervention reduces delay without merely moving it to another part of the system.</p>
-        </article>
-      </section>
+        <aside className="inspector-rail" aria-label="Simulation inspection">
+          <section className="metrics" aria-label="Scenario comparison">
+            <div className="rail-heading">
+              <p className="eyebrow">Readout</p>
+              <h2>Metrics</h2>
+            </div>
+            {metricLabels.map(([key, label, help]) => {
+              const value = selected.metrics[key];
+              const baselineValue = baseline.metrics[key];
+              const delta = Number(value ?? 0) - Number(baselineValue ?? 0);
+              const higherIsBetter = key === "completedItems";
+              const comparisonClass = delta === 0 ? "neutral" : (higherIsBetter ? delta > 0 : delta < 0) ? "improved" : "worse";
+              return (
+                <article key={key} title={help}>
+                  <span>{label}</span>
+                  <strong>{formatMetric(key, value)}</strong>
+                  <small className={comparisonClass}>
+                    {scenarioId === "baseline" ? "Reference" : `${delta > 0 ? "+" : ""}${formatMetric(key, delta)} vs baseline`}
+                  </small>
+                </article>
+              );
+            })}
+          </section>
+
+          <details className="log-drawer">
+            <summary>Daily movement log</summary>
+            <DailyLog entries={selected.dailyLog} stages={selected.config.workflow.stages} seed={selected.seed} />
+          </details>
+        </aside>
+      </div>
     </main>
   );
 }
