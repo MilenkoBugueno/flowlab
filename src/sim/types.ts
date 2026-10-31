@@ -101,3 +101,13 @@ export interface SimulationResult {
   dailyLog: DailyLogEntry[];
   metrics: Metrics;
 }
+
+export interface MeanSimulationResult {
+  config: ScenarioConfig;
+  seeds: number[];
+  runs: SimulationResult[];
+  snapshots: DailySnapshot[];
+  metrics: Metrics;
+}
+
+export type SimulationViewResult = SimulationResult | MeanSimulationResult;

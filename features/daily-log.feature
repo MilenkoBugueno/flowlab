@@ -13,7 +13,7 @@ Feature: Daily simulation movement log
     And movements into the workflow are recorded as External to Ready
     And movements through the workflow are recorded as Ready to Development, Development to Review, and Review to Test
     And completed work is recorded as Test to Done
-    And a daily entry with no movements is still shown with zero counts
+    And movements that do not occur on a day are shown with zero counts
 
   Scenario: Daily movements reconcile with the simulation state
     Given the standard FlowLab baseline scenario

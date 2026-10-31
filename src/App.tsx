@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { CfdChart } from "./chart/CfdChart";
 import { DailyLog } from "./DailyLog";
 import { runScenario } from "./sim/engine";
+import { runMeanScenario, validateMeanSeedCount } from "./sim/mean";
 import { scenarioList, scenarios } from "./sim/scenarios";
 import { withSimulationSettings } from "./sim/settings";
 import type { CapacityIncident, Metrics, ScenarioId, SwarmPolicy } from "./sim/types";
@@ -23,6 +24,9 @@ function formatMetric(key: keyof Metrics, value: Metrics[keyof Metrics]) {
 export default function App() {
   const [scenarioId, setScenarioId] = useState<ScenarioId>("baseline");
   const [seedInput, setSeedInput] = useState("42");
+  const [meanSeedCountInput, setMeanSeedCountInput] = useState("1");
+  const [meanSeedCount, setMeanSeedCount] = useState(1);
+  const [meanSeedError, setMeanSeedError] = useState<string>();
   const [runKey, setRunKey] = useState(0);
   const [workflowInput, setWorkflowInput] = useState(scenarios.baseline.workflow.stages.join(", "));
   const [workflow, setWorkflow] = useState(scenarios.baseline.workflow.stages);
@@ -36,13 +40,19 @@ export default function App() {
   const [swarmDraft, setSwarmDraft] = useState<SwarmPolicy>();
   const [interventionError, setInterventionError] = useState<string>();
   const seed = Number.isFinite(Number(seedInput)) ? Math.max(0, Math.floor(Number(seedInput))) : 42;
-  const baseline = useMemo(() => runScenario(scenarios.baseline, seed), [seed, runKey]);
   const workflowConfig = useMemo(() => withWorkflow(scenarios[scenarioId], workflow), [scenarioId, workflow]);
   const selectedConfig = useMemo(
     () => withSimulationSettings(workflowConfig, { baseRates: savedRates, incident: savedIncident, swarm: savedSwarm }),
     [workflowConfig, savedRates, savedIncident, savedSwarm],
   );
-  const selected = useMemo(() => runScenario(selectedConfig, seed), [selectedConfig, seed, runKey]);
+  const baseline = useMemo(
+    () => meanSeedCount === 1 ? runScenario(scenarios.baseline, seed) : runMeanScenario(scenarios.baseline, meanSeedCount, seed),
+    [seed, meanSeedCount, runKey],
+  );
+  const selected = useMemo(
+    () => meanSeedCount === 1 ? runScenario(selectedConfig, seed) : runMeanScenario(selectedConfig, meanSeedCount, seed),
+    [selectedConfig, seed, meanSeedCount, runKey],
+  );
   const [selectedDay, setSelectedDay] = useState(50);
   const scenario = scenarios[scenarioId];
   const activeWorkflowStages = activeStages(workflowConfig.workflow);
@@ -117,6 +127,17 @@ export default function App() {
     }
   };
 
+  const runSimulation = () => {
+    try {
+      const seedCount = validateMeanSeedCount(Number(meanSeedCountInput));
+      setMeanSeedCount(seedCount);
+      setMeanSeedError(undefined);
+      setRunKey((value) => value + 1);
+    } catch (error) {
+      setMeanSeedError(error instanceof Error ? error.message : "Unable to set the mean CFD seed count.");
+    }
+  };
+
   return (
     <main className="cockpit">
       <header className="topbar">
@@ -130,12 +151,17 @@ export default function App() {
         <aside className="control-rail" aria-label="Simulation controls">
           <section className="panel-section seed-control">
             <p className="eyebrow">Run</p>
-            <label htmlFor="seed">Simulation seed</label>
+            <label htmlFor="seed">First seed</label>
             <div>
               <input id="seed" value={seedInput} onChange={(event) => setSeedInput(event.target.value)} inputMode="numeric" />
-              <button type="button" onClick={() => setRunKey((value) => value + 1)}>Run</button>
             </div>
-            <small>Keep the seed to compare scenarios fairly.</small>
+            <label htmlFor="mean-seed-count">Mean CFD seeds</label>
+            <div>
+              <input id="mean-seed-count" type="number" min="1" step="1" value={meanSeedCountInput} onChange={(event) => setMeanSeedCountInput(event.target.value)} />
+              <button type="button" onClick={runSimulation}>Run</button>
+            </div>
+            <small>{meanSeedCount === 1 ? "Run one reproducible simulation." : `Averaging seeds ${seed}–${seed + meanSeedCount - 1}.`}</small>
+            {meanSeedError && <p className="settings-error" role="alert">{meanSeedError}</p>}
           </section>
 
           <section className="panel-section scenario-section" aria-labelledby="scenario-heading">
@@ -271,7 +297,11 @@ export default function App() {
 
           <details className="log-drawer">
             <summary>Daily movement log</summary>
-            <DailyLog entries={selected.dailyLog} stages={selected.config.workflow.stages} seed={selected.seed} />
+            {"dailyLog" in selected ? (
+              <DailyLog entries={selected.dailyLog} stages={selected.config.workflow.stages} seed={selected.seed} />
+            ) : (
+              <p className="mean-log-note">Daily movement rows belong to an individual simulation. Select one mean-CFD seed to inspect its log.</p>
+            )}
           </details>
         </aside>
       </div>

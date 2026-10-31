@@ -1,6 +1,6 @@
 import * as d3 from "d3";
 import { useMemo, useRef } from "react";
-import type { DailySnapshot, SimulationResult, Stage } from "../sim/types";
+import type { DailySnapshot, SimulationViewResult, Stage } from "../sim/types";
 import { activeStages } from "../sim/workflow";
 
 const palette = ["#cbd5e1", "#38bdf8", "#fb923c", "#a78bfa", "#f472b6", "#facc15", "#34d399", "#60a5fa"];
@@ -8,7 +8,7 @@ const palette = ["#cbd5e1", "#38bdf8", "#fb923c", "#a78bfa", "#f472b6", "#facc15
 type ChartRow = { day: number } & Record<Stage, number>;
 
 interface Props {
-  result: SimulationResult;
+  result: SimulationViewResult;
   selectedDay: number;
   onSelectDay: (day: number) => void;
 }
@@ -16,6 +16,7 @@ interface Props {
 export function CfdChart({ result, selectedDay, onSelectDay }: Props) {
   const svgRef = useRef<SVGSVGElement>(null);
   const { config, snapshots } = result;
+  const meanRunCount = "seeds" in result ? result.seeds.length : 1;
   const workflowStages = config.workflow.stages;
   const stateOrder = [...workflowStages].reverse();
   const colours = Object.fromEntries(workflowStages.map((stage, index) => [stage, palette[index % palette.length]]));
@@ -54,7 +55,7 @@ export function CfdChart({ result, selectedDay, onSelectDay }: Props) {
           <p className="eyebrow">Cumulative flow diagram</p>
           <h2 id="cfd-title">Where work is accumulating</h2>
         </div>
-        <p className="chart-hint">Select a day on the chart to inspect its queues.</p>
+        <p className="chart-hint">{meanRunCount > 1 ? `Mean of ${meanRunCount} simulations · select a day to inspect averages.` : "Select a day on the chart to inspect its queues."}</p>
       </div>
       <div className="legend" aria-label="CFD state legend">
         {stateOrder.map((stage) => (
@@ -111,11 +112,15 @@ function DayInspector({ snapshot, stages }: { snapshot: DailySnapshot; stages: S
         <span className="eyebrow">Selected day</span>
         <strong>Day {snapshot.day}</strong>
       </div>
-      <div><span>Arrived</span><strong>{snapshot.arrivals}</strong></div>
-      <div><span>Completed</span><strong>{snapshot.completions}</strong></div>
+      <div><span>Arrived</span><strong>{formatCount(snapshot.arrivals)}</strong></div>
+      <div><span>Completed</span><strong>{formatCount(snapshot.completions)}</strong></div>
       {statesToInspect.map((stage) => (
-        <div key={stage}><span>{stage}</span><strong>{snapshot.states[stage]} {active.has(stage) && <small>({snapshot.active[stage] ?? 0} active)</small>}</strong></div>
+        <div key={stage}><span>{stage}</span><strong>{formatCount(snapshot.states[stage])} {active.has(stage) && <small>({formatCount(snapshot.active[stage] ?? 0)} active)</small>}</strong></div>
       ))}
     </div>
   );
+}
+
+function formatCount(value: number): string {
+  return Number.isInteger(value) ? String(value) : value.toFixed(1);
 }

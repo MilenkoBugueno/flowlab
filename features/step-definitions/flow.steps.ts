@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { Given, Then, When, World, setWorldConstructor } from "@cucumber/cucumber";
 import { processingRateFor, runScenario } from "../../src/sim/engine";
+import { runMeanScenario, validateMeanSeedCount } from "../../src/sim/mean";
 import { scenarios } from "../../src/sim/scenarios";
 import { withProcessingRates, withSimulationSettings } from "../../src/sim/settings";
-import type { CapacityIncident, ScenarioConfig, SimulationResult, SwarmPolicy } from "../../src/sim/types";
+import type { CapacityIncident, MeanSimulationResult, ScenarioConfig, SimulationResult, SwarmPolicy } from "../../src/sim/types";
 import { activeStages, withWorkflow } from "../../src/sim/workflow";
 
 class FlowLabWorld extends World {
@@ -18,6 +19,12 @@ class FlowLabWorld extends World {
   interventionError?: string;
   interventionsBeforeEdit?: ScenarioConfig;
   pendingSwarm?: SwarmPolicy;
+  meanSeedCount?: number;
+  meanResult?: MeanSimulationResult;
+  secondMeanResult?: MeanSimulationResult;
+  meanBaseline?: MeanSimulationResult;
+  meanSeedError?: string;
+  meanSeedCountBeforeEdit?: number;
 }
 
 setWorldConstructor(FlowLabWorld);
@@ -36,6 +43,11 @@ function movementCount(result: SimulationResult, from: string, to: string): numb
 
 function hasRoute(result: SimulationResult, from: string, to: string): boolean {
   return result.dailyLog.every((entry) => entry.movements.some((movement) => movement.from === from && movement.to === to));
+}
+
+function meanResultFor(world: FlowLabWorld): MeanSimulationResult {
+  assert.ok(world.meanResult, "Expected a completed mean simulation");
+  return world.meanResult;
 }
 
 Given("the standard FlowLab baseline scenario", function (this: FlowLabWorld) {
@@ -150,11 +162,11 @@ Then("completed work is recorded as Test to Done", function (this: FlowLabWorld)
   assert.equal(movementCount(result, "Test", "Done"), completions);
 });
 
-Then("a daily entry with no movements is still shown with zero counts", function (this: FlowLabWorld) {
+Then("movements that do not occur on a day are shown with zero counts", function (this: FlowLabWorld) {
   const result = resultFor(this);
-  const noMovementEntry = result.dailyLog.find((entry) => entry.movements.every((movement) => movement.count === 0));
-  assert.ok(noMovementEntry, "Expected at least one day without movement");
-  assert.ok(noMovementEntry.movements.every((movement) => movement.count === 0));
+  const zeroCountMovement = result.dailyLog.flatMap((entry) => entry.movements).find((movement) => movement.count === 0);
+  assert.ok(zeroCountMovement, "Expected at least one movement route with zero activity");
+  assert.equal(zeroCountMovement.count, 0);
 });
 
 Then("the sum of all daily External to Ready movements equals the number of arrived items", function (this: FlowLabWorld) {
@@ -403,4 +415,119 @@ Then("I am told that a swarm needs different source and target stages", function
 
 Then("the current intervention settings remain unchanged", function (this: FlowLabWorld) {
   assert.equal(this.config, this.interventionsBeforeEdit);
+});
+
+When("I choose {int} seeds for the mean CFD", function (this: FlowLabWorld, seedCount: number) {
+  this.meanSeedCount = validateMeanSeedCount(seedCount);
+});
+
+When("I run the mean simulation", function (this: FlowLabWorld) {
+  assert.ok(this.config, "Choose a scenario before running a mean simulation");
+  assert.ok(this.meanSeedCount, "Choose a positive number of seeds");
+  this.meanResult = runMeanScenario(this.config, this.meanSeedCount);
+  this.meanBaseline = runMeanScenario(scenarios.baseline, this.meanSeedCount);
+});
+
+Then("FlowLab runs {int} simulations for the selected scenario", function (this: FlowLabWorld, seedCount: number) {
+  const result = meanResultFor(this);
+  assert.equal(result.runs.length, seedCount);
+  assert.equal(result.seeds.length, seedCount);
+});
+
+Then("the CFD is labeled as the mean of {int} simulations", function (this: FlowLabWorld, seedCount: number) {
+  assert.equal(meanResultFor(this).seeds.length, seedCount);
+});
+
+Then("each CFD band shows the arithmetic mean number of items in its state for each working day", function (this: FlowLabWorld) {
+  const result = meanResultFor(this);
+  for (const snapshot of result.snapshots) {
+    for (const stage of result.config.workflow.stages) {
+      const expected = result.runs.reduce((total, run) => total + run.snapshots[snapshot.day].states[stage], 0) / result.runs.length;
+      assert.equal(snapshot.states[stage], expected, `Expected mean state for ${stage} on day ${snapshot.day}`);
+    }
+  }
+});
+
+Then("the mean CFD includes every working day in the simulation horizon", function (this: FlowLabWorld) {
+  const result = meanResultFor(this);
+  assert.equal(result.snapshots.length, result.config.horizonDays);
+  assert.deepEqual(result.snapshots.map((snapshot) => snapshot.day), Array.from({ length: result.config.horizonDays }, (_, day) => day));
+});
+
+Then("the mean CFD is based on {int} distinct seeds", function (this: FlowLabWorld, seedCount: number) {
+  const seeds = meanResultFor(this).seeds;
+  assert.equal(new Set(seeds).size, seedCount);
+});
+
+When("I run the mean simulation twice", function (this: FlowLabWorld) {
+  assert.ok(this.config, "Choose a scenario before running a mean simulation");
+  assert.ok(this.meanSeedCount, "Choose a positive number of seeds");
+  this.meanResult = runMeanScenario(this.config, this.meanSeedCount);
+  this.secondMeanResult = runMeanScenario(this.config, this.meanSeedCount);
+});
+
+Then("both mean CFDs have identical daily state values", function (this: FlowLabWorld) {
+  assert.deepEqual(
+    meanResultFor(this).snapshots.map((snapshot) => snapshot.states),
+    this.secondMeanResult?.snapshots.map((snapshot) => snapshot.states),
+  );
+});
+
+Then("both mean CFDs use the same set of seeds", function (this: FlowLabWorld) {
+  assert.deepEqual(meanResultFor(this).seeds, this.secondMeanResult?.seeds);
+});
+
+Then("the mean CFD displays every configured workflow state", function (this: FlowLabWorld) {
+  assert.deepEqual(meanResultFor(this).config.workflow.stages, this.config?.workflow.stages);
+});
+
+Then("the mean CFD includes a Discovery band", function (this: FlowLabWorld) {
+  const result = meanResultFor(this);
+  assert.ok(result.snapshots.every((snapshot) => Object.hasOwn(snapshot.states, "Discovery")));
+});
+
+Then("the baseline comparison uses the same {int} seeds", function (this: FlowLabWorld, seedCount: number) {
+  assert.equal(meanResultFor(this).seeds.length, seedCount);
+  assert.deepEqual(meanResultFor(this).seeds, this.meanBaseline?.seeds);
+});
+
+Then("each selected-scenario run and baseline run share the same demand stream for its seed", function (this: FlowLabWorld) {
+  const result = meanResultFor(this);
+  assert.ok(this.meanBaseline, "Expected a baseline mean simulation");
+  result.runs.forEach((run, index) => {
+    assert.equal(run.seed, this.meanBaseline?.runs[index].seed);
+    assert.deepEqual(
+      run.snapshots.map((snapshot) => snapshot.arrivals),
+      this.meanBaseline?.runs[index].snapshots.map((snapshot) => snapshot.arrivals),
+    );
+  });
+});
+
+Then("the displayed metric differences are calculated from the two mean results", function (this: FlowLabWorld) {
+  const result = meanResultFor(this);
+  assert.ok(this.meanBaseline, "Expected a baseline mean simulation");
+  const selectedAverage = result.runs.reduce((total, run) => total + run.metrics.reviewQueueDays, 0) / result.runs.length;
+  const baselineAverage = this.meanBaseline.runs.reduce((total, run) => total + run.metrics.reviewQueueDays, 0) / this.meanBaseline.runs.length;
+  assert.equal(result.metrics.reviewQueueDays - this.meanBaseline.metrics.reviewQueueDays, selectedAverage - baselineAverage);
+});
+
+Given("I am editing the mean CFD seed count", function (this: FlowLabWorld) {
+  this.meanSeedCount = 100;
+  this.meanSeedCountBeforeEdit = this.meanSeedCount;
+});
+
+When("I save a seed count of {int}", function (this: FlowLabWorld, seedCount: number) {
+  try {
+    this.meanSeedCount = validateMeanSeedCount(seedCount);
+  } catch (error) {
+    this.meanSeedError = error instanceof Error ? error.message : String(error);
+  }
+});
+
+Then("I am told that the mean CFD seed count must be a positive whole number", function (this: FlowLabWorld) {
+  assert.equal(this.meanSeedError, "The mean CFD seed count must be a positive whole number.");
+});
+
+Then("the current mean CFD seed count remains unchanged", function (this: FlowLabWorld) {
+  assert.equal(this.meanSeedCount, this.meanSeedCountBeforeEdit);
 });

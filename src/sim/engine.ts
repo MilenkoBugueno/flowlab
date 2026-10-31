@@ -1,4 +1,4 @@
-import { between, createSeededRandom, poisson } from "./random";
+import { between, createSeededRandom, deriveSeed, poisson } from "./random";
 import type {
   ActiveStage,
   DailyLogEntry,
@@ -69,7 +69,8 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
   const exitStage = stages.at(-1);
   if (!entryStage || !exitStage) throw new Error("A workflow needs an entry and an exit state.");
   const active = activeStages(config.workflow);
-  const random = createSeededRandom(seed);
+  const demandRandom = createSeededRandom(seed);
+  const effortRandom = createSeededRandom(deriveSeed(seed, 0x9e3779b9));
   const items: WorkItem[] = [];
   const events: FlowEvent[] = [];
   const snapshots: DailySnapshot[] = [];
@@ -88,7 +89,7 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
 
   const setEffort = (item: WorkItem, stage: ActiveStage) => {
     const range = config.serviceEffort[stage] ?? { min: 0.75, max: 1.25 };
-    item.effortRemaining = between(range.min, range.max, random);
+    item.effortRemaining = between(range.min, range.max, effortRandom);
   };
 
   const enter = (day: number, item: WorkItem, stage: ActiveStage) => {
@@ -153,7 +154,7 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
 
   for (let day = 0; day < config.horizonDays; day += 1) {
     dailyLog.push({ day, seed, movements: emptyMovements(stages) });
-    const arrivals = poisson(config.arrivalRatePerDay, random) + (config.batchDays.includes(day) ? config.batchSize : 0);
+    const arrivals = poisson(config.arrivalRatePerDay, demandRandom) + (config.batchDays.includes(day) ? config.batchSize : 0);
     for (let arrival = 0; arrival < arrivals; arrival += 1) {
       const item: WorkItem = {
         id: `FL-${String(++itemNumber).padStart(3, "0")}`,

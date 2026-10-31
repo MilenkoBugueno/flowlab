@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { runScenario } from "./engine";
+import { runMeanScenario, validateMeanSeedCount } from "./mean";
 import { scenarios } from "./scenarios";
 import { withWorkflow } from "./workflow";
 
@@ -64,5 +65,24 @@ describe("FlowLab simulation engine", () => {
     expect(config.incident.stage).toBe("Review");
     expect(config.swarm?.sourceStage).toBe("Development");
     expect(config.swarm?.targetStage).toBe("Review");
+  });
+
+  it("keeps the demand stream identical across scenarios for the same seed", () => {
+    const baseline = runScenario(scenarios.baseline, 6);
+    const swarm = runScenario(scenarios.swarm, 6);
+    expect(swarm.snapshots.map((snapshot) => snapshot.arrivals)).toEqual(baseline.snapshots.map((snapshot) => snapshot.arrivals));
+  });
+
+  it("averages daily CFD states across the requested seeds", () => {
+    const mean = runMeanScenario(scenarios.baseline, 2, 6);
+    expect(mean.seeds).toEqual([6, 7]);
+    mean.config.workflow.stages.forEach((stage) => {
+      expect(mean.snapshots[30].states[stage]).toBe((mean.runs[0].snapshots[30].states[stage] + mean.runs[1].snapshots[30].states[stage]) / 2);
+    });
+  });
+
+  it("rejects an invalid mean CFD seed count", () => {
+    expect(() => validateMeanSeedCount(0)).toThrow("The mean CFD seed count must be a positive whole number.");
+    expect(() => validateMeanSeedCount(2.5)).toThrow("The mean CFD seed count must be a positive whole number.");
   });
 });

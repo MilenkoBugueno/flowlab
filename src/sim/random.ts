@@ -15,6 +15,13 @@ export function createSeededRandom(seed: number): RandomSource {
   };
 }
 
+export function deriveSeed(seed: number, stream: number): number {
+  let value = (seed >>> 0) ^ stream;
+  value = Math.imul(value ^ (value >>> 16), 0x45d9f3b);
+  value = Math.imul(value ^ (value >>> 16), 0x45d9f3b);
+  return (value ^ (value >>> 16)) >>> 0;
+}
+
 export function poisson(rate: number, random: RandomSource): number {
   const threshold = Math.exp(-rate);
   let product = 1;
