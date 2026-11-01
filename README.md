@@ -2,6 +2,10 @@
 
 FlowLab is a transparent product-flow simulation lab. It uses seeded scenarios and cumulative flow diagrams (CFDs) to make queues, bottlenecks, swarming, and WIP limits understandable.
 
+## Shareable web deployment
+
+The repository includes a GitHub Pages workflow. In GitHub, set **Settings → Pages → Build and deployment → Source** to **GitHub Actions**. Every push to `main` then publishes FlowLab at `https://milenkobugueno.github.io/flowlab/`. You can also run **Deploy FlowLab to GitHub Pages** manually from the Actions tab.
+
 ## Run locally
 
 ```sh
