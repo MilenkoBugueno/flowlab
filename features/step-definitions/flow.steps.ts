@@ -4,7 +4,7 @@ import { effectiveCapacityFor, processingRateFor, runScenario } from "../../src/
 import { runMeanScenario, validateMeanSeedCount } from "../../src/sim/mean";
 import { scenarios } from "../../src/sim/scenarios";
 import { validateOperatingAssumptions, withOperatingAssumptions, withProcessingRates, withSimulationSettings } from "../../src/sim/settings";
-import type { CapacityIncident, MeanSimulationResult, OperatingAssumptions, ScenarioConfig, SimulationResult, SwarmPolicy } from "../../src/sim/types";
+import type { CapacityIncident, InitialBacklog, ItemTimelineState, MeanSimulationResult, OperatingAssumptions, ScenarioConfig, SimulationResult, SwarmPolicy, WorkItem } from "../../src/sim/types";
 import { activeStages, withWorkflow } from "../../src/sim/workflow";
 
 class FlowLabWorld extends World {
@@ -35,6 +35,9 @@ class FlowLabWorld extends World {
   operatingResult?: { effectiveCapacity: number; taskSwitchingLoss: number };
   operatingError?: string;
   operatingBeforeEdit?: OperatingAssumptions;
+  initialBacklogBeforeEdit?: InitialBacklog;
+  initialBacklogError?: string;
+  inspectedItemId?: string;
 }
 
 setWorldConstructor(FlowLabWorld);
@@ -115,6 +118,23 @@ function fullyUtilizedWipConfig(): ScenarioConfig {
     serviceEffort: { Development: { min: 1, max: 1 }, Test: { min: 5, max: 5 } },
     wipLimits: { Development: 4, Test: 4 },
   };
+}
+
+function initialBacklogConfig(pbiCount: number, bugCount: number, overrides: Partial<ScenarioConfig> = {}): ScenarioConfig {
+  return {
+    ...scenarios.baseline,
+    horizonDays: 3,
+    warmupDays: 0,
+    arrivalRatePerDay: 0,
+    batchDays: [],
+    batchSize: 0,
+    initialBacklog: { pbiCount, bugCount },
+    ...overrides,
+  };
+}
+
+function itemStateAtDay(item: WorkItem, day: number): ItemTimelineState | undefined {
+  return [...item.history].reverse().find((state) => state.day <= day);
 }
 
 Given("the standard FlowLab baseline scenario", function (this: FlowLabWorld) {
@@ -820,7 +840,15 @@ Then("Development records {float} daily capacity as task-switching loss", functi
 });
 
 Given("Development has a maximum concurrency of {int} items and no explicit Development WIP limit", function (this: FlowLabWorld, maximumConcurrency: number) {
-  this.config = operationalConcurrencyConfig(maximumConcurrency);
+  if (this.config) {
+    const current = this.config.operatingAssumptions?.Development ?? { focusWip: 5, maximumConcurrency: 16, taskSwitchingLossRatio: 0.2 };
+    this.config = {
+      ...withOperatingAssumptions(this.config, { Development: { ...current, maximumConcurrency } }),
+      wipLimits: undefined,
+    };
+  } else {
+    this.config = operationalConcurrencyConfig(maximumConcurrency);
+  }
 });
 
 Given("{int} items are ready to enter Development", function (this: FlowLabWorld, itemCount: number) {
@@ -864,12 +892,14 @@ Given("I am editing the Development operating assumptions", function (this: Flow
 
 When("I set Development maximum concurrency to {int} items", function (this: FlowLabWorld, maximumConcurrency: number) {
   assert.ok(this.config, "Expected operating assumptions to edit");
-  const current = this.config.operatingAssumptions?.Development ?? { focusWip: 2, maximumConcurrency: 16, taskSwitchingLossRatio: 0.2 };
+  const current = this.config.operatingAssumptions?.Development ?? { focusWip: 5, maximumConcurrency: 16, taskSwitchingLossRatio: 0.2 };
   this.config = withOperatingAssumptions(this.config, { Development: { ...current, maximumConcurrency } });
 });
 
 Given("Development has no explicit WIP limit", function (this: FlowLabWorld) {
-  assert.equal(this.config?.wipLimits?.Development, undefined);
+  assert.ok(this.config, "Expected a simulation configuration");
+  const { Development: _development, ...remainingLimits } = this.config.wipLimits ?? {};
+  this.config = { ...this.config, wipLimits: Object.keys(remainingLimits).length ? remainingLimits : undefined };
 });
 
 Then("Development can actively work on up to {int} items", function (this: FlowLabWorld, maximumConcurrency: number) {
@@ -887,7 +917,7 @@ Then("additional pushed items wait inside Development until an active slot becom
 
 When("I set Development focus WIP to {int} items", function (this: FlowLabWorld, focusWip: number) {
   assert.ok(this.config, "Expected operating assumptions to edit");
-  const current = this.config.operatingAssumptions?.Development ?? { focusWip: 2, maximumConcurrency: 16, taskSwitchingLossRatio: 0.2 };
+  const current = this.config.operatingAssumptions?.Development ?? { focusWip: 5, maximumConcurrency: 16, taskSwitchingLossRatio: 0.2 };
   this.config = withOperatingAssumptions(this.config, { Development: { ...current, focusWip } });
 });
 
@@ -908,7 +938,8 @@ Given("Development has a maximum concurrency of {int} items", function (this: Fl
 });
 
 Given("Development has an explicit WIP limit of {int} items", function (this: FlowLabWorld, limit: number) {
-  assert.equal(this.config?.wipLimits?.Development, limit);
+  assert.ok(this.config, "Expected a simulation configuration");
+  this.config = { ...this.config, wipLimits: { ...(this.config.wipLimits ?? {}), Development: limit } };
 });
 
 When("{int} items occupy Development", function (this: FlowLabWorld, limit: number) {
@@ -965,4 +996,311 @@ Then("I am told that the task-switching loss ratio must be between zero and one"
 
 Then("the current operating assumptions remain unchanged", function (this: FlowLabWorld) {
   assert.deepEqual(this.config?.operatingAssumptions?.Development, this.operatingBeforeEdit);
+});
+
+Given("I am editing the initial backlog", function (this: FlowLabWorld) {
+  this.config = scenarios.baseline;
+  this.initialBacklogBeforeEdit = this.config.initialBacklog ?? { pbiCount: 0, bugCount: 0 };
+});
+
+When("I set the initial backlog to {int} PBIs and {int} bugs", function (this: FlowLabWorld, pbiCount: number, bugCount: number) {
+  assert.ok(this.config, "Expected a simulation configuration to edit");
+  this.config = withSimulationSettings(this.config, { initialBacklog: { pbiCount, bugCount } });
+});
+
+Then("the next simulation is seeded before day 0 with {int} items in Backlog", function (this: FlowLabWorld, count: number) {
+  assert.ok(this.config, "Expected an initial backlog configuration");
+  this.result = runScenario({ ...this.config, horizonDays: 1, arrivalRatePerDay: 0, batchDays: [] }, 42);
+  const seeded = resultFor(this).items.filter((item) => item.initial);
+  assert.equal(seeded.length, count);
+  assert.ok(seeded.every((item) => item.history[0]?.stage === this.config?.workflow.stages[0] && item.history[0]?.active === false));
+});
+
+Then("the initial backlog contains {int} PBIs and {int} bugs", function (this: FlowLabWorld, pbiCount: number, bugCount: number) {
+  const seeded = resultFor(this).items.filter((item) => item.initial);
+  assert.equal(seeded.filter((item) => item.type === "PBI").length, pbiCount);
+  assert.equal(seeded.filter((item) => item.type === "Bug").length, bugCount);
+});
+
+Then("the configured daily arrivals continue independently of the initial backlog", function (this: FlowLabWorld) {
+  assert.ok((this.config?.arrivalRatePerDay ?? 0) > 0);
+});
+
+Given("a simulation with an initial backlog of {int} PBIs and {int} bug", function (this: FlowLabWorld, pbiCount: number, bugCount: number) {
+  this.config = initialBacklogConfig(pbiCount, bugCount);
+});
+
+Given("a simulation with an initial backlog of {int} PBIs and {int} bugs", function (this: FlowLabWorld, pbiCount: number, bugCount: number) {
+  this.config = initialBacklogConfig(pbiCount, bugCount);
+});
+
+Given("a simulation with an initial backlog of {int} PBIs and no bugs", function (this: FlowLabWorld, pbiCount: number) {
+  this.config = initialBacklogConfig(pbiCount, 0);
+});
+
+When("I simulate with seed {int}", function (this: FlowLabWorld, seed: number) {
+  assert.ok(this.config, "Expected a simulation configuration");
+  this.result = runScenario(this.config, seed);
+  this.secondResult = runScenario(this.config, seed);
+});
+
+Then("every initial backlog item has a unique ID", function (this: FlowLabWorld) {
+  const items = resultFor(this).items.filter((item) => item.initial);
+  assert.equal(new Set(items.map((item) => item.id)).size, items.length);
+});
+
+Then("every initial backlog item has a non-empty title", function (this: FlowLabWorld) {
+  assert.ok(resultFor(this).items.filter((item) => item.initial).every((item) => item.title.trim().length > 0));
+});
+
+Then("every initial backlog item identifies whether it is a PBI or a bug", function (this: FlowLabWorld) {
+  assert.ok(resultFor(this).items.filter((item) => item.initial).every((item) => item.type === "PBI" || item.type === "Bug"));
+});
+
+Then("the same seed produces the same initial item IDs, titles, and types", function (this: FlowLabWorld) {
+  const identify = (result: SimulationResult | undefined) => result?.items.filter((item) => item.initial).map(({ id, title, type }) => ({ id, title, type }));
+  assert.deepEqual(identify(resultFor(this)), identify(this.secondResult));
+});
+
+Given("the arriving PBI share is {float}", function (this: FlowLabWorld, ratio: number) {
+  assert.ok(this.config, "Expected a simulation configuration");
+  this.config = withSimulationSettings(this.config, { arrivalPbiRatio: ratio });
+});
+
+When("new work arrives during the simulation", function (this: FlowLabWorld) {
+  assert.ok(this.config, "Expected a simulation configuration");
+  this.config = { ...this.config, horizonDays: 2, arrivalRatePerDay: 0, batchDays: [1], batchSize: 4 };
+  this.result = runScenario(this.config, 42);
+  this.secondResult = runScenario(this.config, 42);
+});
+
+Then("each arriving item has a unique ID and non-empty title", function (this: FlowLabWorld) {
+  const arriving = resultFor(this).items.filter((item) => !item.initial);
+  assert.ok(arriving.length > 0);
+  assert.equal(new Set(arriving.map((item) => item.id)).size, arriving.length);
+  assert.ok(arriving.every((item) => item.title.trim().length > 0));
+});
+
+Then("each arriving item identifies whether it is a PBI or a bug", function (this: FlowLabWorld) {
+  assert.ok(resultFor(this).items.filter((item) => !item.initial).every((item) => item.type === "PBI" || item.type === "Bug"));
+});
+
+Then("each arriving item starts in the entry workflow stage with inactive status, 0 percent progress, and empty start and completion dates", function (this: FlowLabWorld) {
+  const entryStage = resultFor(this).config.workflow.stages[0];
+  for (const item of resultFor(this).items.filter((candidate) => !candidate.initial)) {
+    const initialState = item.history[0];
+    assert.equal(initialState.stage, entryStage);
+    assert.equal(initialState.active, false);
+    assert.equal(initialState.progressPercent, 0);
+    assert.equal(initialState.startDate, undefined);
+    assert.equal(initialState.completionDate, undefined);
+  }
+});
+
+Then("no arriving item reuses an ID from the initial backlog or a prior arrival", function (this: FlowLabWorld) {
+  const ids = resultFor(this).items.map((item) => item.id);
+  assert.equal(new Set(ids).size, ids.length);
+});
+
+Then("the same seed produces the same arriving item IDs, titles, types, and arrival days", function (this: FlowLabWorld) {
+  const identify = (result: SimulationResult | undefined) => result?.items.filter((item) => !item.initial).map(({ id, title, type, arrivedAt }) => ({ id, title, type, arrivedAt }));
+  assert.deepEqual(identify(resultFor(this)), identify(this.secondResult));
+});
+
+When("I inspect the Kanban board on day {int}", function (this: FlowLabWorld, day: number) {
+  assert.ok(this.config, "Expected a simulation configuration");
+  this.config = { ...this.config, horizonDays: Math.max(this.config.horizonDays, day + 1) };
+  this.result = runScenario(this.config, 42);
+});
+
+Then("every item created on or before day {int} appears in exactly one workflow stage", function (this: FlowLabWorld, day: number) {
+  const visible = resultFor(this).items.filter((item) => item.history[0]?.day <= day);
+  assert.ok(visible.every((item) => itemStateAtDay(item, day) !== undefined));
+  assert.equal(new Set(visible.map((item) => item.id)).size, visible.length);
+});
+
+Then("each card shows its ID, title, stage, active status, progress, start date, and completion date", function (this: FlowLabWorld) {
+  const visible = resultFor(this).items.filter((item) => itemStateAtDay(item, 0));
+  assert.ok(visible.every((item) => {
+    const state = itemStateAtDay(item, 0);
+    return item.id.length > 0 && item.title.length > 0 && state !== undefined && typeof state.stage === "string" && typeof state.active === "boolean" && Number.isFinite(state.progressPercent);
+  }));
+});
+
+Then("the number of cards in each stage matches the CFD state for that day", function (this: FlowLabWorld) {
+  const result = resultFor(this);
+  const stateCounts = Object.fromEntries(result.config.workflow.stages.map((stage) => [stage, 0]));
+  result.items.forEach((item) => {
+    const state = itemStateAtDay(item, 0);
+    if (state) stateCounts[state.stage] += 1;
+  });
+  assert.deepEqual(stateCounts, result.snapshots[0].states);
+});
+
+When("I simulate day {int}", function (this: FlowLabWorld, day: number) {
+  assert.ok(this.config, "Expected a simulation configuration");
+  this.config = { ...this.config, horizonDays: Math.max(this.config.horizonDays, day + 1) };
+  this.result = runScenario(this.config, 42);
+});
+
+Then("all {int} initial items have entered Development", function (this: FlowLabWorld, count: number) {
+  const entries = resultFor(this).events.filter((event) => event.day === 0 && event.type === "entered-stage" && event.stage === "Development");
+  assert.equal(entries.length, count);
+});
+
+Then("{int} items are active in Development", function (this: FlowLabWorld, count: number) {
+  assert.equal(resultFor(this).snapshots[0].active.Development, count);
+});
+
+Then("{int} item is waiting in Development", function (this: FlowLabWorld, count: number) {
+  assert.equal(resultFor(this).snapshots[0].waiting.Development, count);
+});
+
+Then("only active items make progress on day {int}", function (this: FlowLabWorld, day: number) {
+  const result = resultFor(this);
+  const advanced = result.items.filter((item) => (itemStateAtDay(item, day)?.progressPercent ?? 0) > 0);
+  assert.ok(advanced.every((item) => item.firstStartedAt !== undefined && item.firstStartedAt <= day));
+});
+
+Then("{int} items are in Development", function (this: FlowLabWorld, count: number) {
+  assert.equal(resultFor(this).snapshots[0].states.Development, count);
+});
+
+Then("{int} items remain in Backlog", function (this: FlowLabWorld, count: number) {
+  assert.equal(resultFor(this).snapshots[0].states.Backlog, count);
+});
+
+Then("the Kanban board shows the same distribution", function (this: FlowLabWorld) {
+  const result = resultFor(this);
+  const counts = Object.fromEntries(result.config.workflow.stages.map((stage) => [stage, 0]));
+  result.items.forEach((item) => {
+    const state = itemStateAtDay(item, 0);
+    if (state) counts[state.stage] += 1;
+  });
+  assert.deepEqual(counts, result.snapshots[0].states);
+});
+
+Given("an initial backlog item that has not started active work", function (this: FlowLabWorld) {
+  this.config = initialBacklogConfig(2, 0, {
+    horizonDays: 3,
+    baseRates: { Development: 1, Test: 0.1 },
+    serviceEffort: { Development: { min: 1, max: 1 }, Test: { min: 10, max: 10 } },
+    operatingAssumptions: {
+      Development: { focusWip: 1, maximumConcurrency: 1, taskSwitchingLossRatio: 0 },
+      Test: { focusWip: 1, maximumConcurrency: 1, taskSwitchingLossRatio: 0 },
+    },
+    wipLimits: { Test: 0 },
+  });
+  this.result = runScenario(this.config, 42);
+  this.inspectedItemId = resultFor(this).items.find((item) => itemStateAtDay(item, 0)?.startDate === undefined)?.id;
+  assert.ok(this.inspectedItemId, "Expected an item waiting without active work");
+});
+
+When("I inspect the item on day {int}", function (this: FlowLabWorld, day: number) {
+  const item = resultFor(this).items.find((candidate) => candidate.id === this.inspectedItemId);
+  assert.ok(itemStateAtDay(item as WorkItem, day), "Expected the inspected item to be visible on the board");
+});
+
+Then("its progress is {int} percent", function (this: FlowLabWorld, progress: number) {
+  const item = this.inspectedItemId
+    ? resultFor(this).items.find((candidate) => candidate.id === this.inspectedItemId)
+    : resultFor(this).items[0];
+  assert.ok(item, "Expected an item to inspect");
+  const state = this.inspectedItemId ? itemStateAtDay(item, 0) : item.history.at(-1);
+  assert.equal(state?.progressPercent, progress);
+});
+
+Then("its start date is empty", function (this: FlowLabWorld) {
+  const item = resultFor(this).items.find((candidate) => candidate.id === this.inspectedItemId);
+  assert.equal(itemStateAtDay(item as WorkItem, 0)?.startDate, undefined);
+});
+
+Then("its completion date is empty", function (this: FlowLabWorld) {
+  const item = resultFor(this).items.find((candidate) => candidate.id === this.inspectedItemId);
+  assert.equal(itemStateAtDay(item as WorkItem, 0)?.completionDate, undefined);
+});
+
+When("the item becomes active in Development", function (this: FlowLabWorld) {
+  const item = resultFor(this).items.find((candidate) => candidate.id === this.inspectedItemId);
+  assert.equal(item?.startedAt.Development, 1);
+});
+
+Then("its start date is that simulation day", function (this: FlowLabWorld) {
+  const item = resultFor(this).items.find((candidate) => candidate.id === this.inspectedItemId);
+  assert.equal(item?.firstStartedAt, 1);
+});
+
+Then("its progress increases while it receives Development capacity", function (this: FlowLabWorld) {
+  const item = resultFor(this).items.find((candidate) => candidate.id === this.inspectedItemId) as WorkItem;
+  assert.ok((itemStateAtDay(item, 1)?.progressPercent ?? 0) > 0);
+});
+
+When("the item waits without active work", function () {
+  // The scenario configuration keeps Test at a zero WIP admission limit, so the item remains blocked after Development.
+});
+
+Then("its progress does not change", function (this: FlowLabWorld) {
+  const item = resultFor(this).items.find((candidate) => candidate.id === this.inspectedItemId) as WorkItem;
+  assert.equal(itemStateAtDay(item, 2)?.progressPercent, itemStateAtDay(item, 1)?.progressPercent);
+});
+
+Given("an active initial backlog item with enough remaining work to finish today", function (this: FlowLabWorld) {
+  this.config = initialBacklogConfig(1, 0, {
+    horizonDays: 3,
+    baseRates: { Development: 1, Test: 1 },
+    serviceEffort: { Development: { min: 1, max: 1 }, Test: { min: 1, max: 1 } },
+    operatingAssumptions: {
+      Development: { focusWip: 1, maximumConcurrency: 1, taskSwitchingLossRatio: 0 },
+      Test: { focusWip: 1, maximumConcurrency: 1, taskSwitchingLossRatio: 0 },
+    },
+  });
+});
+
+When("the item completes the final workflow stage", function (this: FlowLabWorld) {
+  assert.ok(this.config, "Expected a simulation configuration");
+  this.result = runScenario(this.config, 42);
+});
+
+Then("its stage is the configured final workflow stage", function (this: FlowLabWorld) {
+  const result = resultFor(this);
+  assert.equal(result.items[0].stage, result.config.workflow.stages.at(-1));
+});
+
+Then("its active status is false", function (this: FlowLabWorld) {
+  assert.equal(resultFor(this).items[0].active, false);
+});
+
+Then("its completion date is that simulation day", function (this: FlowLabWorld) {
+  const item = resultFor(this).items[0];
+  assert.equal(item.completedAt, item.history.at(-1)?.completionDate);
+});
+
+When("I set the initial PBI count to {int}", function (this: FlowLabWorld, count: number) {
+  assert.ok(this.config, "Expected a simulation configuration to edit");
+  try {
+    this.config = withSimulationSettings(this.config, { initialBacklog: { pbiCount: count, bugCount: this.initialBacklogBeforeEdit?.bugCount ?? 0 } });
+  } catch (error) {
+    this.initialBacklogError = error instanceof Error ? error.message : String(error);
+  }
+});
+
+Then("I am told that the initial PBI count must be a non-negative whole number", function (this: FlowLabWorld) {
+  assert.equal(this.initialBacklogError, "The initial PBI count must be a non-negative whole number.");
+});
+
+Then("the initial backlog settings remain unchanged", function (this: FlowLabWorld) {
+  assert.deepEqual(this.config?.initialBacklog, this.initialBacklogBeforeEdit);
+});
+
+When("I set the initial bug count to {float}", function (this: FlowLabWorld, count: number) {
+  assert.ok(this.config, "Expected a simulation configuration to edit");
+  try {
+    this.config = withSimulationSettings(this.config, { initialBacklog: { pbiCount: this.initialBacklogBeforeEdit?.pbiCount ?? 0, bugCount: count } });
+  } catch (error) {
+    this.initialBacklogError = error instanceof Error ? error.message : String(error);
+  }
+});
+
+Then("I am told that the initial bug count must be a non-negative whole number", function (this: FlowLabWorld) {
+  assert.equal(this.initialBacklogError, "The initial bug count must be a non-negative whole number.");
 });

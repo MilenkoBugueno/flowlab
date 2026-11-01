@@ -12,6 +12,7 @@ import type {
   SimulationResult,
   Stage,
   WorkItem,
+  WorkItemType,
 } from "./types";
 import { activeStages } from "./workflow";
 
@@ -85,6 +86,7 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
   const active = activeStages(config.workflow);
   const demandRandom = createSeededRandom(seed);
   const effortRandom = createSeededRandom(deriveSeed(seed, 0x9e3779b9));
+  const itemTypeRandom = createSeededRandom(deriveSeed(seed, 0x85ebca6b));
   const items: WorkItem[] = [];
   const events: FlowEvent[] = [];
   const snapshots: DailySnapshot[] = [];
@@ -101,15 +103,48 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
     movement.count += 1;
   };
 
+  const createItem = (day: number, type: WorkItemType, initial: boolean): WorkItem => {
+    const ordinal = ++itemNumber;
+    const plannedEffort = Object.fromEntries(active.map((stage) => {
+      const range = config.serviceEffort[stage] ?? { min: 0.75, max: 1.25 };
+      return [stage, between(range.min, range.max, effortRandom)];
+    }));
+    const totalEffort = Object.values(plannedEffort).reduce((total, effort) => total + effort, 0);
+    const typeLabel = type === "PBI" ? "Product backlog item" : "Bug";
+    return {
+      id: `${type}-${String(ordinal).padStart(3, "0")}`,
+      title: `${typeLabel} ${ordinal}`,
+      type,
+      initial,
+      arrivedAt: day,
+      stage: entryStage,
+      status: "waiting",
+      active: false,
+      progressPercent: 0,
+      totalEffort,
+      completedEffort: 0,
+      plannedEffort,
+      effortRemaining: 0,
+      enteredAt: { [entryStage]: day },
+      startedAt: {},
+      history: [{
+        day,
+        stage: entryStage,
+        active: false,
+        progressPercent: 0,
+      }],
+    };
+  };
+
   const setEffort = (item: WorkItem, stage: ActiveStage) => {
-    const range = config.serviceEffort[stage] ?? { min: 0.75, max: 1.25 };
-    item.effortRemaining = between(range.min, range.max, effortRandom);
+    item.effortRemaining = item.plannedEffort[stage] ?? 0;
   };
 
   const enter = (day: number, item: WorkItem, stage: ActiveStage) => {
     const from = item.stage;
     item.stage = stage;
     item.status = "waiting";
+    item.active = false;
     item.enteredAt[stage] = day;
     setEffort(item, stage);
     record(day, "entered-stage", item, stage);
@@ -119,6 +154,8 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
   const complete = (day: number, item: WorkItem, from: Stage) => {
     item.stage = exitStage;
     item.status = "done";
+    item.active = false;
+    item.progressPercent = 100;
     item.completedAt = day;
     record(day, "completed", item, exitStage);
     recordMovement(day, from, exitStage);
@@ -153,7 +190,9 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
       .sort((a, b) => (a.enteredAt[stage] ?? 0) - (b.enteredAt[stage] ?? 0));
     for (const item of waiting.slice(0, openSlots)) {
       item.status = "active";
+      item.active = true;
       item.startedAt[stage] = day;
+      item.firstStartedAt ??= day;
       record(day, "started", item, stage);
     }
   };
@@ -168,10 +207,15 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
       for (const item of currentlyActive) {
         const effortApplied = Math.min(item.effortRemaining, equalShare);
         item.effortRemaining -= effortApplied;
+        item.completedEffort += effortApplied;
+        item.progressPercent = item.totalEffort > 0
+          ? Math.min(100, (item.completedEffort / item.totalEffort) * 100)
+          : 100;
         capacityApplied += effortApplied;
         if (item.effortRemaining <= 1e-9) {
           item.effortRemaining = 0;
           item.status = "blocked";
+          item.active = false;
           record(day, "blocked", item, stage);
         }
       }
@@ -181,19 +225,35 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
     return 0;
   };
 
+  const recordItemState = (day: number, item: WorkItem) => {
+    const state = {
+      day,
+      stage: item.stage,
+      active: item.active,
+      progressPercent: item.progressPercent,
+      startDate: item.firstStartedAt,
+      completionDate: item.completedAt,
+    };
+    const previous = item.history.at(-1);
+    if (
+      !previous
+      || previous.stage !== state.stage
+      || previous.active !== state.active
+      || previous.progressPercent !== state.progressPercent
+      || previous.startDate !== state.startDate
+      || previous.completionDate !== state.completionDate
+    ) item.history.push(state);
+  };
+
+  const initialBacklog = config.initialBacklog ?? { pbiCount: 0, bugCount: 0 };
+  for (let index = 0; index < initialBacklog.pbiCount; index += 1) items.push(createItem(0, "PBI", true));
+  for (let index = 0; index < initialBacklog.bugCount; index += 1) items.push(createItem(0, "Bug", true));
+
   for (let day = 0; day < config.horizonDays; day += 1) {
     dailyLog.push({ day, seed, movements: emptyMovements(stages) });
     const arrivals = poisson(config.arrivalRatePerDay, demandRandom) + (config.batchDays.includes(day) ? config.batchSize : 0);
     for (let arrival = 0; arrival < arrivals; arrival += 1) {
-      const item: WorkItem = {
-        id: `FL-${String(++itemNumber).padStart(3, "0")}`,
-        arrivedAt: day,
-        stage: entryStage,
-        status: "waiting",
-        effortRemaining: 0,
-        enteredAt: { [entryStage]: day },
-        startedAt: {},
-      };
+      const item = createItem(day, itemTypeRandom.next() < (config.arrivalPbiRatio ?? 0.8) ? "PBI" : "Bug", false);
       items.push(item);
       record(day, "arrival", item, entryStage);
       recordMovement(day, "External", entryStage);
@@ -210,7 +270,7 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
     const operatingCapacity = active.map((stage) => {
       const baseCapacity = processingRateFor(stage, day, config);
       const concurrentItems = concurrentItemCount(items, stage);
-      const assumptions = config.operatingAssumptions?.[stage] ?? { focusWip: 2, maximumConcurrency: 16, taskSwitchingLossRatio: 0.2 };
+      const assumptions = config.operatingAssumptions?.[stage] ?? { focusWip: 5, maximumConcurrency: 16, taskSwitchingLossRatio: 0.2 };
       const { effectiveCapacity, taskSwitchingLoss } = effectiveCapacityFor(baseCapacity, concurrentItems, assumptions);
       return { stage, concurrentItems, baseCapacity, effectiveCapacity, taskSwitchingLoss };
     });
@@ -239,6 +299,7 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
       if (item.status === "active" && active.includes(item.stage)) activeCounts[item.stage] += 1;
       if (item.status !== "active" && item.stage !== exitStage) waiting[item.stage] += 1;
     }
+    items.forEach((item) => recordItemState(day, item));
     snapshots.push({
       day,
       states,
@@ -262,11 +323,7 @@ export function calculateMetrics(items: WorkItem[], snapshots: DailySnapshot[], 
   const reviewStage = stages.find((stage) => stage.toLocaleLowerCase().includes("review")) ?? active.at(-1);
   const completed = items.filter((item) => item.completedAt !== undefined && item.completedAt >= config.warmupDays);
   const cycleTimes = completed.flatMap((item) => {
-    const firstActiveStart = active
-      .map((stage) => item.startedAt[stage])
-      .filter((day): day is number => day !== undefined)
-      .sort((left, right) => left - right)[0];
-    return firstActiveStart === undefined ? [] : [(item.completedAt ?? 0) - firstActiveStart];
+    return item.firstStartedAt === undefined ? [] : [(item.completedAt ?? 0) - item.firstStartedAt];
   });
   const measuredDays = config.horizonDays - config.warmupDays;
   const observed = snapshots.filter((snapshot) => snapshot.day >= config.warmupDays);

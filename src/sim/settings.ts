@@ -1,4 +1,4 @@
-import type { ActiveStage, CapacityIncident, OperatingAssumptions, ScenarioConfig, SwarmPolicy } from "./types";
+import type { ActiveStage, CapacityIncident, InitialBacklog, OperatingAssumptions, ScenarioConfig, SwarmPolicy } from "./types";
 import { activeStages } from "./workflow";
 
 function assertPositiveRate(rate: number, label: string) {
@@ -26,6 +26,20 @@ export function withArrivalRate(config: ScenarioConfig, arrivalRatePerDay: numbe
   return { ...config, arrivalRatePerDay };
 }
 
+export function validateArrivalPbiRatio(ratio: number): number {
+  if (!Number.isFinite(ratio) || ratio < 0 || ratio > 1) {
+    throw new Error("The arriving PBI share must be between zero and one.");
+  }
+  return ratio;
+}
+
+export function validateInitialBacklog(backlog: InitialBacklog): InitialBacklog {
+  for (const [label, count] of [["PBI", backlog.pbiCount], ["bug", backlog.bugCount]] as const) {
+    if (!Number.isInteger(count) || count < 0) throw new Error(`The initial ${label} count must be a non-negative whole number.`);
+  }
+  return backlog;
+}
+
 export function validateWipAssistanceEffectiveness(effectiveness: number): number {
   if (!Number.isFinite(effectiveness) || effectiveness < 0 || effectiveness > 1) {
     throw new Error("WIP assistance effectiveness must be between zero and one.");
@@ -48,7 +62,7 @@ export function validateOperatingAssumptions(assumptions: OperatingAssumptions):
 
 export function withOperatingAssumptions(config: ScenarioConfig, updates: Partial<Record<ActiveStage, OperatingAssumptions>>): ScenarioConfig {
   const operatingAssumptions = Object.fromEntries(activeStages(config.workflow).map((stage) => {
-    const assumptions = updates[stage] ?? config.operatingAssumptions?.[stage] ?? { focusWip: 2, maximumConcurrency: 16, taskSwitchingLossRatio: 0.2 };
+    const assumptions = updates[stage] ?? config.operatingAssumptions?.[stage] ?? { focusWip: 5, maximumConcurrency: 16, taskSwitchingLossRatio: 0.2 };
     return [stage, validateOperatingAssumptions(assumptions)];
   }));
   return { ...config, operatingAssumptions };
@@ -84,6 +98,8 @@ export function validateSwarm(config: ScenarioConfig, swarm: SwarmPolicy): Swarm
 
 export interface SimulationSettings {
   arrivalRatePerDay?: number;
+  arrivalPbiRatio?: number;
+  initialBacklog?: InitialBacklog;
   wipAssistanceEffectiveness?: number;
   operatingAssumptions?: Partial<Record<ActiveStage, OperatingAssumptions>>;
   baseRates?: Partial<Record<ActiveStage, number>>;
@@ -95,6 +111,12 @@ export function withSimulationSettings(config: ScenarioConfig, settings: Simulat
   const withArrival = settings.arrivalRatePerDay === undefined
     ? config
     : withArrivalRate(config, settings.arrivalRatePerDay);
+  const arrivalPbiRatio = settings.arrivalPbiRatio === undefined
+    ? (withArrival.arrivalPbiRatio ?? 0.8)
+    : validateArrivalPbiRatio(settings.arrivalPbiRatio);
+  const initialBacklog = settings.initialBacklog === undefined
+    ? (withArrival.initialBacklog ?? { pbiCount: 0, bugCount: 0 })
+    : validateInitialBacklog(settings.initialBacklog);
   const withRates = withProcessingRates(withArrival, settings.baseRates ?? {});
   const wipAssistanceEffectiveness = settings.wipAssistanceEffectiveness === undefined
     ? (withRates.wipAssistanceEffectiveness ?? 0.75)
@@ -106,5 +128,5 @@ export function withSimulationSettings(config: ScenarioConfig, settings: Simulat
     : withOperating.incident;
   const swarm = settings.swarm ?? withOperating.swarm;
   if (swarm && active.length >= 2) validateSwarm(withOperating, swarm);
-  return { ...withOperating, wipAssistanceEffectiveness, incident, swarm: active.length >= 2 ? swarm : undefined };
+  return { ...withOperating, arrivalPbiRatio, initialBacklog, wipAssistanceEffectiveness, incident, swarm: active.length >= 2 ? swarm : undefined };
 }

@@ -5,6 +5,8 @@ const common = {
   horizonDays: 120,
   warmupDays: 20,
   arrivalRatePerDay: 1.6,
+  arrivalPbiRatio: 0.8,
+  initialBacklog: { pbiCount: 0, bugCount: 0 },
   batchDays: [24, 56, 88],
   batchSize: 2,
   workflow: defaultWorkflow,
@@ -18,8 +20,8 @@ const common = {
     Test: { min: 0.65, max: 1.2 },
   },
   operatingAssumptions: {
-    Development: { focusWip: 2, maximumConcurrency: 16, taskSwitchingLossRatio: 0.2 },
-    Test: { focusWip: 2, maximumConcurrency: 16, taskSwitchingLossRatio: 0.2 },
+    Development: { focusWip: 5, maximumConcurrency: 16, taskSwitchingLossRatio: 0.2 },
+    Test: { focusWip: 5, maximumConcurrency: 16, taskSwitchingLossRatio: 0.2 },
   },
 };
 
@@ -51,14 +53,14 @@ export const scenarios: Record<ScenarioId, ScenarioConfig> = {
     label: "WIP Limits",
     summary: "Pull limits cap Development and Test work; constrained work remains visible upstream.",
     ...common,
-    wipLimits: { Development: 6, Test: 6 },
+    wipLimits: { Development: 5, Test: 5 },
   },
   combined: {
     id: "combined",
     label: "Combined",
     summary: "WIP limits stabilize flow while a temporary swarm helps the Test constraint.",
     ...common,
-    wipLimits: { Development: 6, Test: 6 },
+    wipLimits: { Development: 5, Test: 5 },
     swarm,
   },
 };

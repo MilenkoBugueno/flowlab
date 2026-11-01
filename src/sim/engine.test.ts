@@ -2,18 +2,21 @@ import { describe, expect, it } from "vitest";
 import { calculateMetrics, effectiveCapacityFor, runScenario } from "./engine";
 import { runMeanScenario, validateMeanSeedCount } from "./mean";
 import { scenarios } from "./scenarios";
-import { validateOperatingAssumptions, validateWipAssistanceEffectiveness } from "./settings";
+import { validateArrivalPbiRatio, validateInitialBacklog, validateOperatingAssumptions, validateWipAssistanceEffectiveness } from "./settings";
 import { withWorkflow } from "./workflow";
 
 describe("FlowLab simulation engine", () => {
   it("uses the Test bottleneck workflow by default", () => {
     expect(scenarios.baseline.workflow.stages).toEqual(["Backlog", "Development", "Test", "Done"]);
     expect(scenarios.baseline.arrivalRatePerDay).toBe(1.6);
+    expect(scenarios.baseline.arrivalPbiRatio).toBe(0.8);
+    expect(scenarios.baseline.initialBacklog).toEqual({ pbiCount: 0, bugCount: 0 });
     expect(scenarios.baseline.baseRates).toEqual({ Development: 1.4, Test: 0.7 });
     expect(scenarios.baseline.operatingAssumptions).toEqual({
-      Development: { focusWip: 2, maximumConcurrency: 16, taskSwitchingLossRatio: 0.2 },
-      Test: { focusWip: 2, maximumConcurrency: 16, taskSwitchingLossRatio: 0.2 },
+      Development: { focusWip: 5, maximumConcurrency: 16, taskSwitchingLossRatio: 0.2 },
+      Test: { focusWip: 5, maximumConcurrency: 16, taskSwitchingLossRatio: 0.2 },
     });
+    expect(scenarios.baseline.wipLimits).toBeUndefined();
     expect(scenarios.baseline.incident).toBeUndefined();
     expect(scenarios.swarm.swarm).toMatchObject({ sourceStage: "Development", targetStage: "Test" });
   });
@@ -174,17 +177,116 @@ describe("FlowLab simulation engine", () => {
     const metrics = calculateMetrics([
       {
         id: "FL-001",
+        title: "Product backlog item 1",
+        type: "PBI",
+        initial: false,
         arrivedAt: 0,
         stage: "Done",
         status: "done",
+        active: false,
+        progressPercent: 100,
+        totalEffort: 2,
+        completedEffort: 2,
+        plannedEffort: { Development: 1, Test: 1 },
         effortRemaining: 0,
         enteredAt: { Backlog: 0, Development: 3, Test: 6 },
         startedAt: { Development: 3, Test: 6 },
+        firstStartedAt: 3,
         completedAt: 8,
+        history: [],
       },
     ], [], { ...scenarios.baseline, warmupDays: 0 });
     expect(metrics.medianCycleTime).toBe(5);
     expect(metrics.p85CycleTime).toBe(5);
+  });
+
+  it("seeds the configured PBI and bug inventory without counting it as new arrivals", () => {
+    const result = runScenario({
+      ...scenarios.baseline,
+      horizonDays: 1,
+      warmupDays: 0,
+      arrivalRatePerDay: 0,
+      batchDays: [],
+      initialBacklog: { pbiCount: 2, bugCount: 1 },
+      baseRates: { Development: 0.1, Test: 0.1 },
+      serviceEffort: { Development: { min: 10, max: 10 }, Test: { min: 10, max: 10 } },
+    }, 42);
+    expect(result.items.map((item) => ({ id: item.id, title: item.title, type: item.type, initial: item.initial }))).toEqual([
+      { id: "PBI-001", title: "Product backlog item 1", type: "PBI", initial: true },
+      { id: "PBI-002", title: "Product backlog item 2", type: "PBI", initial: true },
+      { id: "Bug-003", title: "Bug 3", type: "Bug", initial: true },
+    ]);
+    expect(result.snapshots[0].arrivals).toBe(0);
+    expect(result.dailyLog[0].movements.find((movement) => movement.from === "External" && movement.to === "Backlog")?.count).toBe(0);
+  });
+
+  it("gives arriving work deterministic item metadata and item history", () => {
+    const config = {
+      ...scenarios.baseline,
+      horizonDays: 2,
+      warmupDays: 0,
+      arrivalRatePerDay: 0,
+      batchDays: [1],
+      batchSize: 3,
+      arrivalPbiRatio: 0,
+      initialBacklog: { pbiCount: 1, bugCount: 1 },
+      baseRates: { Development: 0.1, Test: 0.1 },
+      serviceEffort: { Development: { min: 10, max: 10 }, Test: { min: 10, max: 10 } },
+    };
+    const first = runScenario(config, 42);
+    const second = runScenario(config, 42);
+    const arrivals = first.items.filter((item) => !item.initial);
+    expect(arrivals).toHaveLength(3);
+    expect(arrivals.every((item) => item.type === "Bug" && item.title.length > 0 && item.history.length > 0)).toBe(true);
+    expect(first.items.map((item) => ({ id: item.id, title: item.title, type: item.type, arrivedAt: item.arrivedAt }))).toEqual(
+      second.items.map((item) => ({ id: item.id, title: item.title, type: item.type, arrivedAt: item.arrivedAt })),
+    );
+  });
+
+  it("records board state that reconciles with each CFD snapshot", () => {
+    const result = runScenario({
+      ...scenarios.baseline,
+      horizonDays: 3,
+      warmupDays: 0,
+      arrivalRatePerDay: 0,
+      batchDays: [],
+      initialBacklog: { pbiCount: 3, bugCount: 2 },
+    }, 42);
+    for (const snapshot of result.snapshots) {
+      const states = Object.fromEntries(result.config.workflow.stages.map((stage) => [stage, 0]));
+      result.items.forEach((item) => {
+        const state = [...item.history].reverse().find((entry) => entry.day <= snapshot.day);
+        if (state) states[state.stage] += 1;
+      });
+      expect(states).toEqual(snapshot.states);
+    }
+  });
+
+  it("only advances progress for items that receive active capacity", () => {
+    const result = runScenario({
+      ...scenarios.baseline,
+      horizonDays: 1,
+      warmupDays: 0,
+      arrivalRatePerDay: 0,
+      batchDays: [],
+      initialBacklog: { pbiCount: 2, bugCount: 0 },
+      baseRates: { Development: 1, Test: 0.1 },
+      serviceEffort: { Development: { min: 1, max: 1 }, Test: { min: 10, max: 10 } },
+      operatingAssumptions: {
+        Development: { focusWip: 1, maximumConcurrency: 1, taskSwitchingLossRatio: 0 },
+        Test: { focusWip: 1, maximumConcurrency: 1, taskSwitchingLossRatio: 0 },
+      },
+    }, 42);
+    const [worked, waiting] = result.items;
+    expect(worked.progressPercent).toBeGreaterThan(0);
+    expect(waiting.progressPercent).toBe(0);
+    expect(waiting.firstStartedAt).toBeUndefined();
+  });
+
+  it("validates initial backlog counts and the arriving PBI share", () => {
+    expect(() => validateInitialBacklog({ pbiCount: -1, bugCount: 0 })).toThrow("The initial PBI count must be a non-negative whole number.");
+    expect(() => validateInitialBacklog({ pbiCount: 0, bugCount: 1.5 })).toThrow("The initial bug count must be a non-negative whole number.");
+    expect(() => validateArrivalPbiRatio(1.1)).toThrow("The arriving PBI share must be between zero and one.");
   });
 
   it("rejects a maximum concurrency below focus WIP", () => {

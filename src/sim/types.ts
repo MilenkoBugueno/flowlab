@@ -1,6 +1,7 @@
 export type Stage = string;
 export type ActiveStage = string;
 export type ItemStatus = "waiting" | "active" | "blocked" | "done";
+export type WorkItemType = "PBI" | "Bug";
 export type ScenarioId = "baseline" | "swarm" | "wip" | "combined";
 
 export interface WorkflowConfig {
@@ -29,6 +30,11 @@ export interface OperatingAssumptions {
   taskSwitchingLossRatio: number;
 }
 
+export interface InitialBacklog {
+  pbiCount: number;
+  bugCount: number;
+}
+
 export interface ScenarioConfig {
   id: ScenarioId;
   label: string;
@@ -37,6 +43,8 @@ export interface ScenarioConfig {
   horizonDays: number;
   warmupDays: number;
   arrivalRatePerDay: number;
+  arrivalPbiRatio?: number;
+  initialBacklog?: InitialBacklog;
   batchDays: number[];
   batchSize: number;
   baseRates: Partial<Record<ActiveStage, number>>;
@@ -50,13 +58,32 @@ export interface ScenarioConfig {
 
 export interface WorkItem {
   id: string;
+  title: string;
+  type: WorkItemType;
+  initial: boolean;
   arrivedAt: number;
   stage: Stage;
   status: ItemStatus;
+  active: boolean;
+  progressPercent: number;
+  totalEffort: number;
+  completedEffort: number;
+  plannedEffort: Partial<Record<ActiveStage, number>>;
   effortRemaining: number;
   enteredAt: Partial<Record<Stage, number>>;
   startedAt: Partial<Record<ActiveStage, number>>;
+  firstStartedAt?: number;
   completedAt?: number;
+  history: ItemTimelineState[];
+}
+
+export interface ItemTimelineState {
+  day: number;
+  stage: Stage;
+  active: boolean;
+  progressPercent: number;
+  startDate?: number;
+  completionDate?: number;
 }
 
 export interface FlowEvent {

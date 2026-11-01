@@ -45,8 +45,8 @@ export function withWorkflow(config: ScenarioConfig, states: string[]): Scenario
   const wipLimits = config.wipLimits
     ? Object.fromEntries(nextActive.flatMap((stage, index) => {
       const oldStage = stageAtSamePosition(oldActive, stage, index);
-      const limit = oldStage === undefined ? undefined : config.wipLimits?.[oldStage];
-      return limit === undefined ? [] : [[stage, limit]];
+      const limit = oldStage === undefined ? 5 : (config.wipLimits?.[oldStage] ?? 5);
+      return [[stage, limit]];
     }))
     : undefined;
 

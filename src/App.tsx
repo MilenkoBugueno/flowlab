@@ -1,11 +1,12 @@
 import { useMemo, useState } from "react";
 import { CfdChart } from "./chart/CfdChart";
 import { DailyLog } from "./DailyLog";
+import { KanbanBoard } from "./KanbanBoard";
 import { runScenario } from "./sim/engine";
 import { runMeanScenario, validateMeanSeedCount } from "./sim/mean";
 import { scenarioList, scenarios } from "./sim/scenarios";
 import { withSimulationSettings } from "./sim/settings";
-import type { CapacityIncident, Metrics, OperatingAssumptions, ScenarioId, SwarmPolicy } from "./sim/types";
+import type { CapacityIncident, InitialBacklog, Metrics, OperatingAssumptions, ScenarioId, SwarmPolicy } from "./sim/types";
 import { activeStages, withWorkflow } from "./sim/workflow";
 
 const metricLabels: Array<[keyof Metrics, string, string]> = [
@@ -27,9 +28,15 @@ export default function App() {
   const [seedInput, setSeedInput] = useState("42");
   const [arrivalRateInput, setArrivalRateInput] = useState(String(scenarios.baseline.arrivalRatePerDay));
   const [savedArrivalRate, setSavedArrivalRate] = useState(scenarios.baseline.arrivalRatePerDay);
+  const [arrivalPbiRatioInput, setArrivalPbiRatioInput] = useState(String(scenarios.baseline.arrivalPbiRatio ?? 0.8));
+  const [savedArrivalPbiRatio, setSavedArrivalPbiRatio] = useState(scenarios.baseline.arrivalPbiRatio ?? 0.8);
   const [wipAssistanceInput, setWipAssistanceInput] = useState(String(scenarios.baseline.wipAssistanceEffectiveness ?? 0.75));
   const [savedWipAssistanceEffectiveness, setSavedWipAssistanceEffectiveness] = useState(scenarios.baseline.wipAssistanceEffectiveness ?? 0.75);
   const [arrivalRateError, setArrivalRateError] = useState<string>();
+  const [initialPbiInput, setInitialPbiInput] = useState(String(scenarios.baseline.initialBacklog?.pbiCount ?? 0));
+  const [initialBugInput, setInitialBugInput] = useState(String(scenarios.baseline.initialBacklog?.bugCount ?? 0));
+  const [savedInitialBacklog, setSavedInitialBacklog] = useState<InitialBacklog>(scenarios.baseline.initialBacklog ?? { pbiCount: 0, bugCount: 0 });
+  const [initialBacklogError, setInitialBacklogError] = useState<string>();
   const [meanSeedCountInput, setMeanSeedCountInput] = useState("1");
   const [meanSeedCount, setMeanSeedCount] = useState(1);
   const [meanSeedError, setMeanSeedError] = useState<string>();
@@ -50,12 +57,12 @@ export default function App() {
   const seed = Number.isFinite(Number(seedInput)) ? Math.max(0, Math.floor(Number(seedInput))) : 42;
   const workflowConfig = useMemo(() => withWorkflow(scenarios[scenarioId], workflow), [scenarioId, workflow]);
   const selectedConfig = useMemo(
-    () => withSimulationSettings(workflowConfig, { arrivalRatePerDay: savedArrivalRate, wipAssistanceEffectiveness: savedWipAssistanceEffectiveness, baseRates: savedRates, operatingAssumptions: savedOperatingAssumptions, incident: savedIncident, swarm: savedSwarm }),
-    [workflowConfig, savedArrivalRate, savedWipAssistanceEffectiveness, savedRates, savedOperatingAssumptions, savedIncident, savedSwarm],
+    () => withSimulationSettings(workflowConfig, { arrivalRatePerDay: savedArrivalRate, arrivalPbiRatio: savedArrivalPbiRatio, initialBacklog: savedInitialBacklog, wipAssistanceEffectiveness: savedWipAssistanceEffectiveness, baseRates: savedRates, operatingAssumptions: savedOperatingAssumptions, incident: savedIncident, swarm: savedSwarm }),
+    [workflowConfig, savedArrivalRate, savedArrivalPbiRatio, savedInitialBacklog, savedWipAssistanceEffectiveness, savedRates, savedOperatingAssumptions, savedIncident, savedSwarm],
   );
   const baselineConfig = useMemo(
-    () => withSimulationSettings(scenarios.baseline, { arrivalRatePerDay: savedArrivalRate, wipAssistanceEffectiveness: savedWipAssistanceEffectiveness, operatingAssumptions: savedOperatingAssumptions }),
-    [savedArrivalRate, savedWipAssistanceEffectiveness, savedOperatingAssumptions],
+    () => withSimulationSettings(scenarios.baseline, { arrivalRatePerDay: savedArrivalRate, arrivalPbiRatio: savedArrivalPbiRatio, initialBacklog: savedInitialBacklog, wipAssistanceEffectiveness: savedWipAssistanceEffectiveness, operatingAssumptions: savedOperatingAssumptions }),
+    [savedArrivalRate, savedArrivalPbiRatio, savedInitialBacklog, savedWipAssistanceEffectiveness, savedOperatingAssumptions],
   );
   const baseline = useMemo(
     () => meanSeedCount === 1 ? runScenario(baselineConfig, seed) : runMeanScenario(baselineConfig, meanSeedCount, seed),
@@ -66,6 +73,7 @@ export default function App() {
     [selectedConfig, seed, meanSeedCount, runKey],
   );
   const [selectedDay, setSelectedDay] = useState(50);
+  const [visualization, setVisualization] = useState<"cfd" | "kanban">("cfd");
   const scenario = scenarios[scenarioId];
   const activeWorkflowStages = activeStages(workflowConfig.workflow);
   const fallbackIncident: CapacityIncident = {
@@ -113,6 +121,7 @@ export default function App() {
   const saveRates = () => {
     try {
       const arrivalRate = Number(arrivalRateInput);
+      const arrivalPbiRatio = Number(arrivalPbiRatioInput);
       const wipAssistanceEffectiveness = Number(wipAssistanceInput);
       const rates = Object.fromEntries(activeWorkflowStages.map((stage) => [
         stage,
@@ -120,10 +129,11 @@ export default function App() {
       ]));
       const operatingAssumptions = Object.fromEntries(activeWorkflowStages.map((stage) => [
         stage,
-        operatingDraft[stage] ?? selectedConfig.operatingAssumptions?.[stage] ?? { focusWip: 2, maximumConcurrency: 16, taskSwitchingLossRatio: 0.2 },
+        operatingDraft[stage] ?? selectedConfig.operatingAssumptions?.[stage] ?? { focusWip: 5, maximumConcurrency: 16, taskSwitchingLossRatio: 0.2 },
       ]));
-      withSimulationSettings(workflowConfig, { arrivalRatePerDay: arrivalRate, wipAssistanceEffectiveness, baseRates: rates, operatingAssumptions, incident: savedIncident, swarm: savedSwarm });
+      withSimulationSettings(workflowConfig, { arrivalRatePerDay: arrivalRate, arrivalPbiRatio, wipAssistanceEffectiveness, baseRates: rates, operatingAssumptions, incident: savedIncident, swarm: savedSwarm });
       setSavedArrivalRate(arrivalRate);
+      setSavedArrivalPbiRatio(arrivalPbiRatio);
       setSavedWipAssistanceEffectiveness(wipAssistanceEffectiveness);
       setSavedRates(rates);
       setRateDraft({});
@@ -140,6 +150,17 @@ export default function App() {
         setCapacityError(message);
         setArrivalRateError(undefined);
       }
+    }
+  };
+
+  const saveInitialBacklog = () => {
+    try {
+      const initialBacklog = { pbiCount: Number(initialPbiInput), bugCount: Number(initialBugInput) };
+      withSimulationSettings(workflowConfig, { initialBacklog });
+      setSavedInitialBacklog(initialBacklog);
+      setInitialBacklogError(undefined);
+    } catch (error) {
+      setInitialBacklogError(error instanceof Error ? error.message : "Unable to save the initial backlog.");
     }
   };
 
@@ -166,7 +187,7 @@ export default function App() {
   };
 
   const updateOperatingAssumption = (stage: string, field: keyof OperatingAssumptions, value: string) => {
-    const current = operatingDraft[stage] ?? selectedConfig.operatingAssumptions?.[stage] ?? { focusWip: 2, maximumConcurrency: 16, taskSwitchingLossRatio: 0.2 };
+    const current = operatingDraft[stage] ?? selectedConfig.operatingAssumptions?.[stage] ?? { focusWip: 5, maximumConcurrency: 16, taskSwitchingLossRatio: 0.2 };
     setOperatingDraft((draft) => ({ ...draft, [stage]: { ...current, [field]: Number(value) } }));
   };
 
@@ -247,13 +268,17 @@ export default function App() {
               <span>Average arrivals / day</span>
               <input id="arrival-rate" type="number" min="0" step="0.1" value={arrivalRateInput} onChange={(event) => setArrivalRateInput(event.target.value)} />
             </label>
+            <label className="arrival-rate-field" htmlFor="arrival-pbi-ratio">
+              <span>PBI share of arrivals</span>
+              <input id="arrival-pbi-ratio" type="number" min="0" max="1" step="0.05" value={arrivalPbiRatioInput} onChange={(event) => setArrivalPbiRatioInput(event.target.value)} />
+            </label>
             <label className="arrival-rate-field" htmlFor="wip-assistance-effectiveness">
               <span>WIP assistance effectiveness</span>
               <input id="wip-assistance-effectiveness" type="number" min="0" max="1" step="0.05" value={wipAssistanceInput} onChange={(event) => setWipAssistanceInput(event.target.value)} />
             </label>
             <div className="stage-allocation-list">
               {activeWorkflowStages.map((stage) => {
-                const assumptions = operatingDraft[stage] ?? selectedConfig.operatingAssumptions?.[stage] ?? { focusWip: 2, maximumConcurrency: 16, taskSwitchingLossRatio: 0.2 };
+                const assumptions = operatingDraft[stage] ?? selectedConfig.operatingAssumptions?.[stage] ?? { focusWip: 5, maximumConcurrency: 16, taskSwitchingLossRatio: 0.2 };
                 return (
                   <fieldset key={stage}>
                     <legend>{stage}</legend>
@@ -268,6 +293,21 @@ export default function App() {
             <button type="button" onClick={saveRates}>Save allocation</button>
             {capacityError && <p className="settings-error" role="alert">{capacityError}</p>}
             {arrivalRateError && <p className="settings-error" role="alert">{arrivalRateError}</p>}
+          </details>
+
+          <details className="settings-panel">
+            <summary>Initial backlog</summary>
+            <p>Seed the simulation before day 0. These items are not counted as new daily arrivals.</p>
+            <label className="arrival-rate-field" htmlFor="initial-pbis">
+              <span>Initial PBIs</span>
+              <input id="initial-pbis" type="number" min="0" step="1" value={initialPbiInput} onChange={(event) => setInitialPbiInput(event.target.value)} />
+            </label>
+            <label className="arrival-rate-field" htmlFor="initial-bugs">
+              <span>Initial Bugs</span>
+              <input id="initial-bugs" type="number" min="0" step="1" value={initialBugInput} onChange={(event) => setInitialBugInput(event.target.value)} />
+            </label>
+            <button type="button" onClick={saveInitialBacklog}>Save initial backlog</button>
+            {initialBacklogError && <p className="settings-error" role="alert">{initialBacklogError}</p>}
           </details>
 
           <details className="settings-panel">
@@ -319,8 +359,18 @@ export default function App() {
           </details>
         </aside>
 
-        <section className="cfd-canvas" aria-label="Cumulative flow diagram workspace">
-          <CfdChart result={selected} selectedDay={selectedDay} onSelectDay={setSelectedDay} />
+        <section className="cfd-canvas" aria-label="Simulation visualization workspace">
+          <div className="visualization-tabs" role="tablist" aria-label="Simulation visualizations">
+            <button type="button" role="tab" aria-selected={visualization === "cfd"} className={visualization === "cfd" ? "active" : ""} onClick={() => setVisualization("cfd")}>CFD</button>
+            <button type="button" role="tab" aria-selected={visualization === "kanban"} className={visualization === "kanban" ? "active" : ""} onClick={() => setVisualization("kanban")}>Kanban</button>
+          </div>
+          {visualization === "cfd" ? (
+            <CfdChart result={selected} selectedDay={selectedDay} onSelectDay={setSelectedDay} />
+          ) : "dailyLog" in selected ? (
+            <KanbanBoard result={selected} selectedDay={selectedDay} onSelectDay={setSelectedDay} />
+          ) : (
+            <section className="kanban-empty"><p className="eyebrow">Item trace</p><h2>Kanban board</h2><p>Run one seed to inspect individual items. A mean CFD has no single set of cards.</p></section>
+          )}
         </section>
 
         <aside className="inspector-rail" aria-label="Simulation inspection">
