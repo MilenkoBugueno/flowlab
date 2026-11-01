@@ -103,9 +103,11 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
     movement.count += 1;
   };
 
-  const createItem = (day: number, type: WorkItemType, initial: boolean): WorkItem => {
+  const createItem = (day: number, type: WorkItemType, initial: boolean, initialStage = entryStage): WorkItem => {
     const ordinal = ++itemNumber;
-    const plannedEffort = Object.fromEntries(active.map((stage) => {
+    const firstPlannedStage = initialStage === entryStage ? 0 : active.indexOf(initialStage);
+    const plannedStages = active.slice(Math.max(0, firstPlannedStage));
+    const plannedEffort = Object.fromEntries(plannedStages.map((stage) => {
       const range = config.serviceEffort[stage] ?? { min: 0.75, max: 1.25 };
       return [stage, between(range.min, range.max, effortRandom)];
     }));
@@ -117,19 +119,19 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
       type,
       initial,
       arrivedAt: day,
-      stage: entryStage,
+      stage: initialStage,
       status: "waiting",
       active: false,
       progressPercent: 0,
       totalEffort,
       completedEffort: 0,
       plannedEffort,
-      effortRemaining: 0,
-      enteredAt: { [entryStage]: day },
+      effortRemaining: active.includes(initialStage) ? (plannedEffort[initialStage] ?? 0) : 0,
+      enteredAt: { [initialStage]: day },
       startedAt: {},
       history: [{
         day,
-        stage: entryStage,
+        stage: initialStage,
         active: false,
         progressPercent: 0,
       }],
@@ -245,9 +247,12 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
     ) item.history.push(state);
   };
 
-  const initialBacklog = config.initialBacklog ?? { pbiCount: 0, bugCount: 0 };
-  for (let index = 0; index < initialBacklog.pbiCount; index += 1) items.push(createItem(0, "PBI", true));
-  for (let index = 0; index < initialBacklog.bugCount; index += 1) items.push(createItem(0, "Bug", true));
+  const initialInventory = config.initialInventory ?? { [entryStage]: config.initialBacklog ?? { pbiCount: 0, bugCount: 0 } };
+  for (const stage of stages.slice(0, -1)) {
+    const inventory = initialInventory[stage] ?? { pbiCount: 0, bugCount: 0 };
+    for (let index = 0; index < inventory.pbiCount; index += 1) items.push(createItem(0, "PBI", true, stage));
+    for (let index = 0; index < inventory.bugCount; index += 1) items.push(createItem(0, "Bug", true, stage));
+  }
 
   for (let day = 0; day < config.horizonDays; day += 1) {
     dailyLog.push({ day, seed, movements: emptyMovements(stages) });

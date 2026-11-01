@@ -1,4 +1,4 @@
-import type { ActiveStage, CapacityIncident, InitialBacklog, OperatingAssumptions, ScenarioConfig, SwarmPolicy } from "./types";
+import type { ActiveStage, CapacityIncident, InitialBacklog, InitialInventory, OperatingAssumptions, ScenarioConfig, SwarmPolicy } from "./types";
 import { activeStages } from "./workflow";
 
 function assertPositiveRate(rate: number, label: string) {
@@ -38,6 +38,25 @@ export function validateInitialBacklog(backlog: InitialBacklog): InitialBacklog 
     if (!Number.isInteger(count) || count < 0) throw new Error(`The initial ${label} count must be a non-negative whole number.`);
   }
   return backlog;
+}
+
+export function validateInitialInventory(config: ScenarioConfig, inventory: InitialInventory): InitialInventory {
+  const stages = config.workflow.stages;
+  const seedableStages = stages.slice(0, -1);
+  const terminalStage = stages.at(-1);
+  if (terminalStage && inventory[terminalStage] && (inventory[terminalStage]?.pbiCount || inventory[terminalStage]?.bugCount)) {
+    throw new Error(`The final workflow stage, ${terminalStage}, cannot contain initial inventory.`);
+  }
+  for (const stage of Object.keys(inventory)) {
+    if (!seedableStages.includes(stage)) throw new Error(`${stage} is not a seedable workflow stage.`);
+  }
+  return Object.fromEntries(seedableStages.map((stage) => {
+    const counts = inventory[stage] ?? { pbiCount: 0, bugCount: 0 };
+    for (const [type, count] of [["PBI", counts.pbiCount], ["bug", counts.bugCount]] as const) {
+      if (!Number.isInteger(count) || count < 0) throw new Error(`The initial ${stage} ${type} count must be a non-negative whole number.`);
+    }
+    return [stage, counts];
+  }));
 }
 
 export function validateWipAssistanceEffectiveness(effectiveness: number): number {
@@ -100,6 +119,7 @@ export interface SimulationSettings {
   arrivalRatePerDay?: number;
   arrivalPbiRatio?: number;
   initialBacklog?: InitialBacklog;
+  initialInventory?: InitialInventory;
   wipAssistanceEffectiveness?: number;
   operatingAssumptions?: Partial<Record<ActiveStage, OperatingAssumptions>>;
   baseRates?: Partial<Record<ActiveStage, number>>;
@@ -117,6 +137,9 @@ export function withSimulationSettings(config: ScenarioConfig, settings: Simulat
   const initialBacklog = settings.initialBacklog === undefined
     ? (withArrival.initialBacklog ?? { pbiCount: 0, bugCount: 0 })
     : validateInitialBacklog(settings.initialBacklog);
+  const initialInventory = settings.initialInventory === undefined
+    ? withArrival.initialInventory
+    : validateInitialInventory(withArrival, settings.initialInventory);
   const withRates = withProcessingRates(withArrival, settings.baseRates ?? {});
   const wipAssistanceEffectiveness = settings.wipAssistanceEffectiveness === undefined
     ? (withRates.wipAssistanceEffectiveness ?? 0.75)
@@ -128,5 +151,5 @@ export function withSimulationSettings(config: ScenarioConfig, settings: Simulat
     : withOperating.incident;
   const swarm = settings.swarm ?? withOperating.swarm;
   if (swarm && active.length >= 2) validateSwarm(withOperating, swarm);
-  return { ...withOperating, arrivalPbiRatio, initialBacklog, wipAssistanceEffectiveness, incident, swarm: active.length >= 2 ? swarm : undefined };
+  return { ...withOperating, arrivalPbiRatio, initialBacklog, initialInventory, wipAssistanceEffectiveness, incident, swarm: active.length >= 2 ? swarm : undefined };
 }

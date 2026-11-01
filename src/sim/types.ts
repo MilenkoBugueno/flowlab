@@ -35,6 +35,8 @@ export interface InitialBacklog {
   bugCount: number;
 }
 
+export type InitialInventory = Partial<Record<Stage, InitialBacklog>>;
+
 export interface ScenarioConfig {
   id: ScenarioId;
   label: string;
@@ -45,6 +47,7 @@ export interface ScenarioConfig {
   arrivalRatePerDay: number;
   arrivalPbiRatio?: number;
   initialBacklog?: InitialBacklog;
+  initialInventory?: InitialInventory;
   batchDays: number[];
   batchSize: number;
   baseRates: Partial<Record<ActiveStage, number>>;

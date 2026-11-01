@@ -6,7 +6,7 @@ import { runScenario } from "./sim/engine";
 import { runMeanScenario, validateMeanSeedCount } from "./sim/mean";
 import { scenarioList, scenarios } from "./sim/scenarios";
 import { withSimulationSettings } from "./sim/settings";
-import type { CapacityIncident, InitialBacklog, Metrics, OperatingAssumptions, ScenarioId, SwarmPolicy } from "./sim/types";
+import type { CapacityIncident, InitialInventory, Metrics, OperatingAssumptions, ScenarioId, SwarmPolicy } from "./sim/types";
 import { activeStages, withWorkflow } from "./sim/workflow";
 
 const metricLabels: Array<[keyof Metrics, string, string]> = [
@@ -23,6 +23,10 @@ function formatMetric(key: keyof Metrics, value: Metrics[keyof Metrics]) {
   return Number(value).toFixed(0);
 }
 
+function inventoryForStages(inventory: InitialInventory, stages: string[]): InitialInventory {
+  return Object.fromEntries(stages.slice(0, -1).map((stage) => [stage, inventory[stage] ?? { pbiCount: 0, bugCount: 0 }]));
+}
+
 export default function App() {
   const [scenarioId, setScenarioId] = useState<ScenarioId>("baseline");
   const [seedInput, setSeedInput] = useState("42");
@@ -33,10 +37,9 @@ export default function App() {
   const [wipAssistanceInput, setWipAssistanceInput] = useState(String(scenarios.baseline.wipAssistanceEffectiveness ?? 0.75));
   const [savedWipAssistanceEffectiveness, setSavedWipAssistanceEffectiveness] = useState(scenarios.baseline.wipAssistanceEffectiveness ?? 0.75);
   const [arrivalRateError, setArrivalRateError] = useState<string>();
-  const [initialPbiInput, setInitialPbiInput] = useState(String(scenarios.baseline.initialBacklog?.pbiCount ?? 0));
-  const [initialBugInput, setInitialBugInput] = useState(String(scenarios.baseline.initialBacklog?.bugCount ?? 0));
-  const [savedInitialBacklog, setSavedInitialBacklog] = useState<InitialBacklog>(scenarios.baseline.initialBacklog ?? { pbiCount: 0, bugCount: 0 });
-  const [initialBacklogError, setInitialBacklogError] = useState<string>();
+  const [savedInitialInventory, setSavedInitialInventory] = useState<InitialInventory>({});
+  const [initialInventoryDraft, setInitialInventoryDraft] = useState<Partial<Record<string, { pbiCount: string; bugCount: string }>>>({});
+  const [initialInventoryError, setInitialInventoryError] = useState<string>();
   const [meanSeedCountInput, setMeanSeedCountInput] = useState("1");
   const [meanSeedCount, setMeanSeedCount] = useState(1);
   const [meanSeedError, setMeanSeedError] = useState<string>();
@@ -57,12 +60,12 @@ export default function App() {
   const seed = Number.isFinite(Number(seedInput)) ? Math.max(0, Math.floor(Number(seedInput))) : 42;
   const workflowConfig = useMemo(() => withWorkflow(scenarios[scenarioId], workflow), [scenarioId, workflow]);
   const selectedConfig = useMemo(
-    () => withSimulationSettings(workflowConfig, { arrivalRatePerDay: savedArrivalRate, arrivalPbiRatio: savedArrivalPbiRatio, initialBacklog: savedInitialBacklog, wipAssistanceEffectiveness: savedWipAssistanceEffectiveness, baseRates: savedRates, operatingAssumptions: savedOperatingAssumptions, incident: savedIncident, swarm: savedSwarm }),
-    [workflowConfig, savedArrivalRate, savedArrivalPbiRatio, savedInitialBacklog, savedWipAssistanceEffectiveness, savedRates, savedOperatingAssumptions, savedIncident, savedSwarm],
+    () => withSimulationSettings(workflowConfig, { arrivalRatePerDay: savedArrivalRate, arrivalPbiRatio: savedArrivalPbiRatio, initialInventory: inventoryForStages(savedInitialInventory, workflowConfig.workflow.stages), wipAssistanceEffectiveness: savedWipAssistanceEffectiveness, baseRates: savedRates, operatingAssumptions: savedOperatingAssumptions, incident: savedIncident, swarm: savedSwarm }),
+    [workflowConfig, savedArrivalRate, savedArrivalPbiRatio, savedInitialInventory, savedWipAssistanceEffectiveness, savedRates, savedOperatingAssumptions, savedIncident, savedSwarm],
   );
   const baselineConfig = useMemo(
-    () => withSimulationSettings(scenarios.baseline, { arrivalRatePerDay: savedArrivalRate, arrivalPbiRatio: savedArrivalPbiRatio, initialBacklog: savedInitialBacklog, wipAssistanceEffectiveness: savedWipAssistanceEffectiveness, operatingAssumptions: savedOperatingAssumptions }),
-    [savedArrivalRate, savedArrivalPbiRatio, savedInitialBacklog, savedWipAssistanceEffectiveness, savedOperatingAssumptions],
+    () => withSimulationSettings(scenarios.baseline, { arrivalRatePerDay: savedArrivalRate, arrivalPbiRatio: savedArrivalPbiRatio, initialInventory: inventoryForStages(savedInitialInventory, scenarios.baseline.workflow.stages), wipAssistanceEffectiveness: savedWipAssistanceEffectiveness, operatingAssumptions: savedOperatingAssumptions }),
+    [savedArrivalRate, savedArrivalPbiRatio, savedInitialInventory, savedWipAssistanceEffectiveness, savedOperatingAssumptions],
   );
   const baseline = useMemo(
     () => meanSeedCount === 1 ? runScenario(baselineConfig, seed) : runMeanScenario(baselineConfig, meanSeedCount, seed),
@@ -76,6 +79,7 @@ export default function App() {
   const [visualization, setVisualization] = useState<"cfd" | "kanban">("cfd");
   const scenario = scenarios[scenarioId];
   const activeWorkflowStages = activeStages(workflowConfig.workflow);
+  const initialInventoryStages = workflowConfig.workflow.stages.slice(0, -1);
   const fallbackIncident: CapacityIncident = {
     stage: activeWorkflowStages[0] ?? "",
     startDay: 30,
@@ -153,14 +157,25 @@ export default function App() {
     }
   };
 
-  const saveInitialBacklog = () => {
+  const updateInitialInventory = (stage: string, field: "pbiCount" | "bugCount", value: string) => {
+    const current = initialInventoryDraft[stage]
+      ?? { pbiCount: String(selectedConfig.initialInventory?.[stage]?.pbiCount ?? 0), bugCount: String(selectedConfig.initialInventory?.[stage]?.bugCount ?? 0) };
+    setInitialInventoryDraft((draft) => ({ ...draft, [stage]: { ...current, [field]: value } }));
+  };
+
+  const saveInitialInventory = () => {
     try {
-      const initialBacklog = { pbiCount: Number(initialPbiInput), bugCount: Number(initialBugInput) };
-      withSimulationSettings(workflowConfig, { initialBacklog });
-      setSavedInitialBacklog(initialBacklog);
-      setInitialBacklogError(undefined);
+      const initialInventory = Object.fromEntries(initialInventoryStages.map((stage) => {
+        const counts = initialInventoryDraft[stage]
+          ?? { pbiCount: String(selectedConfig.initialInventory?.[stage]?.pbiCount ?? 0), bugCount: String(selectedConfig.initialInventory?.[stage]?.bugCount ?? 0) };
+        return [stage, { pbiCount: Number(counts.pbiCount), bugCount: Number(counts.bugCount) }];
+      }));
+      withSimulationSettings(workflowConfig, { initialInventory });
+      setSavedInitialInventory(initialInventory);
+      setInitialInventoryDraft({});
+      setInitialInventoryError(undefined);
     } catch (error) {
-      setInitialBacklogError(error instanceof Error ? error.message : "Unable to save the initial backlog.");
+      setInitialInventoryError(error instanceof Error ? error.message : "Unable to save the initial workflow inventory.");
     }
   };
 
@@ -296,18 +311,21 @@ export default function App() {
           </details>
 
           <details className="settings-panel">
-            <summary>Initial backlog</summary>
-            <p>Seed the simulation before day 0. These items are not counted as new daily arrivals.</p>
-            <label className="arrival-rate-field" htmlFor="initial-pbis">
-              <span>Initial PBIs</span>
-              <input id="initial-pbis" type="number" min="0" step="1" value={initialPbiInput} onChange={(event) => setInitialPbiInput(event.target.value)} />
-            </label>
-            <label className="arrival-rate-field" htmlFor="initial-bugs">
-              <span>Initial Bugs</span>
-              <input id="initial-bugs" type="number" min="0" step="1" value={initialBugInput} onChange={(event) => setInitialBugInput(event.target.value)} />
-            </label>
-            <button type="button" onClick={saveInitialBacklog}>Save initial backlog</button>
-            {initialBacklogError && <p className="settings-error" role="alert">{initialBacklogError}</p>}
+            <summary>Initial workflow inventory</summary>
+            <p>Seed each non-terminal stage before day 0. These items are not counted as new daily arrivals.</p>
+            <div className="initial-inventory-list">
+              {initialInventoryStages.map((stage) => {
+                const counts = initialInventoryDraft[stage]
+                  ?? { pbiCount: String(selectedConfig.initialInventory?.[stage]?.pbiCount ?? 0), bugCount: String(selectedConfig.initialInventory?.[stage]?.bugCount ?? 0) };
+                return <fieldset key={stage}>
+                  <legend>{stage}</legend>
+                  <label>PBIs<input type="number" min="0" step="1" value={counts.pbiCount} onChange={(event) => updateInitialInventory(stage, "pbiCount", event.target.value)} /></label>
+                  <label>Bugs<input type="number" min="0" step="1" value={counts.bugCount} onChange={(event) => updateInitialInventory(stage, "bugCount", event.target.value)} /></label>
+                </fieldset>;
+              })}
+            </div>
+            <button type="button" onClick={saveInitialInventory}>Save initial inventory</button>
+            {initialInventoryError && <p className="settings-error" role="alert">{initialInventoryError}</p>}
           </details>
 
           <details className="settings-panel">

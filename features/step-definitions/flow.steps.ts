@@ -4,7 +4,7 @@ import { effectiveCapacityFor, processingRateFor, runScenario } from "../../src/
 import { runMeanScenario, validateMeanSeedCount } from "../../src/sim/mean";
 import { scenarios } from "../../src/sim/scenarios";
 import { validateOperatingAssumptions, withOperatingAssumptions, withProcessingRates, withSimulationSettings } from "../../src/sim/settings";
-import type { CapacityIncident, InitialBacklog, ItemTimelineState, MeanSimulationResult, OperatingAssumptions, ScenarioConfig, SimulationResult, SwarmPolicy, WorkItem } from "../../src/sim/types";
+import type { CapacityIncident, InitialBacklog, InitialInventory, ItemTimelineState, MeanSimulationResult, OperatingAssumptions, ScenarioConfig, SimulationResult, SwarmPolicy, WorkItem } from "../../src/sim/types";
 import { activeStages, withWorkflow } from "../../src/sim/workflow";
 
 class FlowLabWorld extends World {
@@ -37,6 +37,8 @@ class FlowLabWorld extends World {
   operatingBeforeEdit?: OperatingAssumptions;
   initialBacklogBeforeEdit?: InitialBacklog;
   initialBacklogError?: string;
+  initialInventoryBeforeEdit?: InitialInventory;
+  initialInventoryError?: string;
   inspectedItemId?: string;
 }
 
@@ -135,6 +137,27 @@ function initialBacklogConfig(pbiCount: number, bugCount: number, overrides: Par
 
 function itemStateAtDay(item: WorkItem, day: number): ItemTimelineState | undefined {
   return [...item.history].reverse().find((state) => state.day <= day);
+}
+
+function inventoryFor(config: ScenarioConfig): InitialInventory {
+  return Object.fromEntries(config.workflow.stages.slice(0, -1).map((stage) => [stage, config.initialInventory?.[stage] ?? { pbiCount: 0, bugCount: 0 }]));
+}
+
+function withStageInventory(config: ScenarioConfig, stage: string, pbiCount: number, bugCount: number): ScenarioConfig {
+  return withSimulationSettings(config, { initialInventory: { ...inventoryFor(config), [stage]: { pbiCount, bugCount } } });
+}
+
+function stagedInventoryConfig(inventory: InitialInventory, overrides: Partial<ScenarioConfig> = {}): ScenarioConfig {
+  return {
+    ...scenarios.baseline,
+    horizonDays: 3,
+    warmupDays: 0,
+    arrivalRatePerDay: 0,
+    batchDays: [],
+    batchSize: 0,
+    initialInventory: inventory,
+    ...overrides,
+  };
 }
 
 Given("the standard FlowLab baseline scenario", function (this: FlowLabWorld) {
@@ -998,6 +1021,126 @@ Then("the current operating assumptions remain unchanged", function (this: FlowL
   assert.deepEqual(this.config?.operatingAssumptions?.Development, this.operatingBeforeEdit);
 });
 
+Given("I am editing the initial workflow inventory", function (this: FlowLabWorld) {
+  this.config = withSimulationSettings(scenarios.baseline, { initialInventory: {} });
+  this.initialInventoryBeforeEdit = this.config.initialInventory;
+});
+
+When(/^I set the initial inventory to (\d+) PBIs? and (\d+) bugs? in (.+)$/, function (this: FlowLabWorld, pbiCount: string, bugCount: string, stage: string) {
+  assert.ok(this.config, "Expected a simulation configuration to edit");
+  this.config = withStageInventory(this.config, stage, Number(pbiCount), Number(bugCount));
+});
+
+Then("{int} items in Development", function (this: FlowLabWorld, count: number) {
+  const seeded = resultFor(this).items.filter((item) => item.initial && item.history[0]?.stage === "Development");
+  assert.equal(seeded.length, count);
+});
+
+Then("{int} items in Test", function (this: FlowLabWorld, count: number) {
+  const seeded = resultFor(this).items.filter((item) => item.initial && item.history[0]?.stage === "Test");
+  assert.equal(seeded.length, count);
+});
+
+Then("no initial work can be seeded directly into Done", function (this: FlowLabWorld) {
+  assert.equal(this.config?.initialInventory?.Done, undefined);
+  assert.ok(resultFor(this).items.every((item) => item.history[0]?.stage !== "Done"));
+});
+
+When("I open the initial workflow inventory settings", function (this: FlowLabWorld) {
+  assert.ok(this.config, "Expected a workflow configuration");
+  this.config = withSimulationSettings(this.config, { initialInventory: {} });
+});
+
+Then("I can set an initial PBI and bug count for Ready, Discovery, Development, and Test", function (this: FlowLabWorld) {
+  assert.deepEqual(Object.keys(this.config?.initialInventory ?? {}), ["Ready", "Discovery", "Development", "Test"]);
+});
+
+Then("Done is not an initial-inventory stage", function (this: FlowLabWorld) {
+  assert.equal(this.config?.initialInventory?.Done, undefined);
+});
+
+Given("an initial inventory of 2 PBIs in Backlog, 1 bug in Development, and 1 PBI in Test", function (this: FlowLabWorld) {
+  this.config = stagedInventoryConfig({
+    Backlog: { pbiCount: 2, bugCount: 0 },
+    Development: { pbiCount: 0, bugCount: 1 },
+    Test: { pbiCount: 1, bugCount: 0 },
+  });
+});
+
+When("I inspect the Kanban board before the first simulated working day", function (this: FlowLabWorld) {
+  assert.ok(this.config, "Expected a simulation configuration");
+  this.result = runScenario(this.config, 42);
+});
+
+Then("every seeded item has a unique ID and a non-empty title", function (this: FlowLabWorld) {
+  const seeded = resultFor(this).items.filter((item) => item.initial);
+  assert.equal(new Set(seeded.map((item) => item.id)).size, seeded.length);
+  assert.ok(seeded.every((item) => item.title.trim().length > 0));
+});
+
+Then("each seeded item identifies whether it is a PBI or a bug", function (this: FlowLabWorld) {
+  assert.ok(resultFor(this).items.filter((item) => item.initial).every((item) => item.type === "PBI" || item.type === "Bug"));
+});
+
+Then("each seeded item appears in its configured starting stage", function (this: FlowLabWorld) {
+  const inventory = this.config?.initialInventory ?? {};
+  for (const [stage, counts] of Object.entries(inventory)) {
+    const items = resultFor(this).items.filter((item) => item.initial && item.history[0]?.stage === stage);
+    const expected = counts ?? { pbiCount: 0, bugCount: 0 };
+    assert.equal(items.filter((item) => item.type === "PBI").length, expected.pbiCount);
+    assert.equal(items.filter((item) => item.type === "Bug").length, expected.bugCount);
+  }
+});
+
+Then("each seeded item is initially inactive with {int} percent simulated progress", function (this: FlowLabWorld, progress: number) {
+  assert.ok(resultFor(this).items.filter((item) => item.initial).every((item) => item.history[0]?.active === false && item.history[0]?.progressPercent === progress));
+});
+
+Given("an initial inventory of {int} PBIs in Development", function (this: FlowLabWorld, pbiCount: number) {
+  this.config = stagedInventoryConfig({ Development: { pbiCount, bugCount: 0 } }, { horizonDays: 1 });
+});
+
+Then("{int} seeded Development items are active or received Development capacity on day {int}", function (this: FlowLabWorld, count: number, day: number) {
+  const started = resultFor(this).items.filter((item) => item.initial && item.history[0]?.stage === "Development" && item.startedAt.Development === day);
+  assert.equal(started.length, count);
+});
+
+Then("{int} seeded Development item remains waiting in Development", function (this: FlowLabWorld, count: number) {
+  const waiting = resultFor(this).items.filter((item) => item.initial && item.history[0]?.stage === "Development" && itemStateAtDay(item, 0)?.stage === "Development" && item.firstStartedAt === undefined);
+  assert.equal(waiting.length, count);
+});
+
+Then("all {int} seeded items remain represented in Development or downstream stages", function (this: FlowLabWorld, count: number) {
+  const result = resultFor(this);
+  const stages = result.config.workflow.stages;
+  const developmentIndex = stages.indexOf("Development");
+  const seeded = result.items.filter((item) => item.initial && item.history[0]?.stage === "Development");
+  assert.equal(seeded.length, count);
+  assert.ok(seeded.every((item) => stages.indexOf(item.stage) >= developmentIndex));
+});
+
+Then("the Development WIP limit blocks only later admissions into Development", function (this: FlowLabWorld) {
+  assert.equal(this.config?.wipLimits?.Development, 5);
+  assert.equal(resultFor(this).items.filter((item) => item.initial && item.history[0]?.stage === "Development").length, 8);
+});
+
+When("I set the initial Test bug count to {int}", function (this: FlowLabWorld, count: number) {
+  assert.ok(this.config, "Expected a simulation configuration to edit");
+  try {
+    this.config = withStageInventory(this.config, "Test", this.config.initialInventory?.Test?.pbiCount ?? 0, count);
+  } catch (error) {
+    this.initialInventoryError = error instanceof Error ? error.message : String(error);
+  }
+});
+
+Then("I am told that the initial Test bug count must be a non-negative whole number", function (this: FlowLabWorld) {
+  assert.equal(this.initialInventoryError, "The initial Test bug count must be a non-negative whole number.");
+});
+
+Then("the initial workflow inventory settings remain unchanged", function (this: FlowLabWorld) {
+  assert.deepEqual(this.config?.initialInventory, this.initialInventoryBeforeEdit);
+});
+
 Given("I am editing the initial backlog", function (this: FlowLabWorld) {
   this.config = scenarios.baseline;
   this.initialBacklogBeforeEdit = this.config.initialBacklog ?? { pbiCount: 0, bugCount: 0 };
@@ -1011,9 +1154,9 @@ When("I set the initial backlog to {int} PBIs and {int} bugs", function (this: F
 Then("the next simulation is seeded before day 0 with {int} items in Backlog", function (this: FlowLabWorld, count: number) {
   assert.ok(this.config, "Expected an initial backlog configuration");
   this.result = runScenario({ ...this.config, horizonDays: 1, arrivalRatePerDay: 0, batchDays: [] }, 42);
-  const seeded = resultFor(this).items.filter((item) => item.initial);
+  const seeded = resultFor(this).items.filter((item) => item.initial && item.history[0]?.stage === this.config?.workflow.stages[0]);
   assert.equal(seeded.length, count);
-  assert.ok(seeded.every((item) => item.history[0]?.stage === this.config?.workflow.stages[0] && item.history[0]?.active === false));
+  assert.ok(seeded.every((item) => item.history[0]?.active === false));
 });
 
 Then("the initial backlog contains {int} PBIs and {int} bugs", function (this: FlowLabWorld, pbiCount: number, bugCount: number) {

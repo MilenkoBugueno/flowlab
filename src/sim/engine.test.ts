@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { calculateMetrics, effectiveCapacityFor, runScenario } from "./engine";
 import { runMeanScenario, validateMeanSeedCount } from "./mean";
 import { scenarios } from "./scenarios";
-import { validateArrivalPbiRatio, validateInitialBacklog, validateOperatingAssumptions, validateWipAssistanceEffectiveness } from "./settings";
+import { validateArrivalPbiRatio, validateInitialBacklog, validateInitialInventory, validateOperatingAssumptions, validateWipAssistanceEffectiveness } from "./settings";
 import { withWorkflow } from "./workflow";
 
 describe("FlowLab simulation engine", () => {
@@ -283,10 +283,56 @@ describe("FlowLab simulation engine", () => {
     expect(waiting.firstStartedAt).toBeUndefined();
   });
 
+  it("seeds PBI and bug inventory directly into each configured non-terminal stage", () => {
+    const result = runScenario({
+      ...scenarios.baseline,
+      horizonDays: 1,
+      warmupDays: 0,
+      arrivalRatePerDay: 0,
+      batchDays: [],
+      initialInventory: {
+        Backlog: { pbiCount: 2, bugCount: 3 },
+        Development: { pbiCount: 1, bugCount: 1 },
+        Test: { pbiCount: 1, bugCount: 1 },
+      },
+      baseRates: { Development: 0.1, Test: 0.1 },
+      serviceEffort: { Development: { min: 10, max: 10 }, Test: { min: 10, max: 10 } },
+    }, 42);
+    const seededAt = (stage: string, type: "PBI" | "Bug") => result.items.filter((item) => item.initial && item.type === type && item.history[0]?.stage === stage);
+    expect(seededAt("Backlog", "PBI")).toHaveLength(2);
+    expect(seededAt("Backlog", "Bug")).toHaveLength(3);
+    expect(seededAt("Development", "PBI")).toHaveLength(1);
+    expect(seededAt("Development", "Bug")).toHaveLength(1);
+    expect(seededAt("Test", "PBI")).toHaveLength(1);
+    expect(seededAt("Test", "Bug")).toHaveLength(1);
+    expect(seededAt("Test", "PBI")[0].plannedEffort).toEqual({ Test: 10 });
+  });
+
+  it("allows a seeded stage inventory to exceed its WIP limit while enforcing the limit on later admissions", () => {
+    const result = runScenario({
+      ...scenarios.baseline,
+      horizonDays: 1,
+      warmupDays: 0,
+      arrivalRatePerDay: 0,
+      batchDays: [],
+      initialInventory: { Development: { pbiCount: 8, bugCount: 0 } },
+      wipLimits: { Development: 5, Test: 5 },
+      baseRates: { Development: 0.1, Test: 0.1 },
+      serviceEffort: { Development: { min: 10, max: 10 }, Test: { min: 10, max: 10 } },
+    }, 42);
+    expect(result.items.filter((item) => item.initial && item.history[0]?.stage === "Development")).toHaveLength(8);
+    expect(result.snapshots[0].states.Development).toBe(8);
+  });
+
   it("validates initial backlog counts and the arriving PBI share", () => {
     expect(() => validateInitialBacklog({ pbiCount: -1, bugCount: 0 })).toThrow("The initial PBI count must be a non-negative whole number.");
     expect(() => validateInitialBacklog({ pbiCount: 0, bugCount: 1.5 })).toThrow("The initial bug count must be a non-negative whole number.");
     expect(() => validateArrivalPbiRatio(1.1)).toThrow("The arriving PBI share must be between zero and one.");
+  });
+
+  it("validates stage-specific initial inventory and excludes the final stage", () => {
+    expect(() => validateInitialInventory(scenarios.baseline, { Test: { pbiCount: 0, bugCount: -1 } })).toThrow("The initial Test bug count must be a non-negative whole number.");
+    expect(() => validateInitialInventory(scenarios.baseline, { Done: { pbiCount: 1, bugCount: 0 } })).toThrow("The final workflow stage, Done, cannot contain initial inventory.");
   });
 
   it("rejects a maximum concurrency below focus WIP", () => {

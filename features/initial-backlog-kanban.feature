@@ -1,9 +1,53 @@
 Feature: Initial backlog and simulated Kanban board
 
   A simulation can begin with a configured inventory of product backlog items
-  (PBIs) and bugs. Each item remains individually traceable while the
-  simulation applies the workflow's WIP limits, capacity, and operational
-  concurrency settings in the background.
+  (PBIs) and bugs in each non-terminal workflow stage. Each item remains
+  individually traceable while the simulation applies the workflow's WIP
+  limits, capacity, and operational concurrency settings in the background.
+
+  Scenario: Configure the initial inventory for every non-terminal stage
+    Given I am editing the initial workflow inventory
+    When I set the initial inventory to 8 PBIs and 3 bugs in Backlog
+    And I set the initial inventory to 2 PBIs and 1 bug in Development
+    And I set the initial inventory to 1 PBI and 1 bug in Test
+    Then the next simulation is seeded before day 0 with 11 items in Backlog
+    And 3 items in Development
+    And 2 items in Test
+    And no initial work can be seeded directly into Done
+
+  Scenario: Initial inventory fields follow a customized workflow
+    Given a workflow with the states "Ready", "Discovery", "Development", "Test", and "Done"
+    When I open the initial workflow inventory settings
+    Then I can set an initial PBI and bug count for Ready, Discovery, Development, and Test
+    And Done is not an initial-inventory stage
+
+  Scenario: Seeded items retain their type and selected starting stage
+    Given an initial inventory of 2 PBIs in Backlog, 1 bug in Development, and 1 PBI in Test
+    When I inspect the Kanban board before the first simulated working day
+    Then every seeded item has a unique ID and a non-empty title
+    And each seeded item identifies whether it is a PBI or a bug
+    And each seeded item appears in its configured starting stage
+    And each seeded item is initially inactive with 0 percent simulated progress
+
+  Scenario: Operational concurrency determines active work from a seeded stage inventory
+    Given an initial inventory of 17 PBIs in Development
+    And Development has a maximum concurrency of 16 items and no explicit Development WIP limit
+    When I simulate day 0
+    Then 16 seeded Development items are active or received Development capacity on day 0
+    And 1 seeded Development item remains waiting in Development
+
+  Scenario: A WIP limit does not discard work already seeded in a stage
+    Given an initial inventory of 8 PBIs in Development
+    And Development has an explicit WIP limit of 5 items
+    When I simulate day 0
+    Then all 8 seeded items remain represented in Development or downstream stages
+    And the Development WIP limit blocks only later admissions into Development
+
+  Scenario: Reject an invalid initial inventory count for a stage
+    Given I am editing the initial workflow inventory
+    When I set the initial Test bug count to -1
+    Then I am told that the initial Test bug count must be a non-negative whole number
+    And the initial workflow inventory settings remain unchanged
 
   Scenario: Configure the initial backlog by item type
     Given I am editing the initial backlog

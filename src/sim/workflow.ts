@@ -1,4 +1,4 @@
-import type { ActiveStage, ScenarioConfig, Stage, WorkflowConfig } from "./types";
+import type { ActiveStage, InitialInventory, ScenarioConfig, Stage, WorkflowConfig } from "./types";
 
 const defaultEffort = { min: 0.75, max: 1.25 };
 
@@ -49,6 +49,12 @@ export function withWorkflow(config: ScenarioConfig, states: string[]): Scenario
       return [[stage, limit]];
     }))
     : undefined;
+  const initialInventory: InitialInventory | undefined = config.initialInventory
+    ? Object.fromEntries(stages.slice(0, -1).map((stage, index) => {
+      const oldStage = config.workflow.stages.includes(stage) ? stage : config.workflow.stages[index];
+      return [stage, oldStage ? (config.initialInventory?.[oldStage] ?? { pbiCount: 0, bugCount: 0 }) : { pbiCount: 0, bugCount: 0 }];
+    }))
+    : undefined;
 
   return {
     ...config,
@@ -56,6 +62,7 @@ export function withWorkflow(config: ScenarioConfig, states: string[]): Scenario
     baseRates,
     serviceEffort,
     wipLimits,
+    initialInventory,
     incident: config.incident && incidentStage ? { ...config.incident, stage: incidentStage } : undefined,
     swarm: config.swarm && mappedSource && mappedTarget && mappedSource !== mappedTarget
       ? { ...config.swarm, sourceStage: mappedSource, targetStage: mappedTarget }
