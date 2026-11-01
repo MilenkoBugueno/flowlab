@@ -1,5 +1,40 @@
 # FlowLab
 
+FlowLab contains a browser-based product-flow simulation lab and the materials
+for the accompanying moderated tabletop pilot. The simulation uses seeded
+scenarios and cumulative flow diagrams (CFDs) to make queues, bottlenecks,
+swarming, and WIP limits understandable.
+
+## Shareable web deployment
+
+The repository includes a GitHub Pages workflow. In GitHub, set **Settings →
+Pages → Build and deployment → Source** to **GitHub Actions**. Every push to
+`main` then publishes FlowLab at
+`https://milenkobugueno.github.io/flowlab/`.
+
+## Run the simulator locally
+
+```sh
+npm install
+npm run dev
+```
+
+## Verify simulator behavior
+
+```sh
+npm test
+```
+
+The executable product behavior is expressed in `features/*.feature`. The
+Cucumber steps exercise the simulation core directly; React and D3 render its
+explicit daily snapshots and metrics.
+
+The simulator includes Baseline, Start Finishing - Stop Starting, WIP Limits,
+and WIP Limits + Start Finishing presets. It is a learning model, not a
+calibrated prediction of a specific organization.
+
+## Tabletop Pilot
+
 FlowLab ist ein moderiertes Tabletop-Lernspiel, mit dem Produktentwickler lernen,
 Product Development Flow anhand fragmentierter Projektdaten zu erkennen,
 systemisch zu erklären und Verbesserungen zu erproben.
