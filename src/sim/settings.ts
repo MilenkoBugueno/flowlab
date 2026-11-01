@@ -1,4 +1,4 @@
-import type { ActiveStage, CapacityIncident, FeatureBacklogConfig, InitialBacklog, InitialInventory, OperatingAssumptions, ScenarioConfig, SwarmPolicy } from "./types";
+import type { ActiveStage, CapacityIncident, FeatureBacklogConfig, FeatureFocusPolicy, InitialBacklog, InitialInventory, OperatingAssumptions, ScenarioConfig, SwarmPolicy } from "./types";
 import { activeStages } from "./workflow";
 
 function assertPositiveRate(rate: number, label: string) {
@@ -71,6 +71,13 @@ export function validateFeatureBacklog(config: FeatureBacklogConfig): FeatureBac
   return config;
 }
 
+export function validateFeatureFocus(config: ScenarioConfig, policy: FeatureFocusPolicy): FeatureFocusPolicy {
+  if (!Number.isInteger(policy.startDay) || policy.startDay < 0 || policy.startDay >= config.horizonDays) {
+    throw new Error("The completion-focus start day must be within the simulation horizon.");
+  }
+  return policy;
+}
+
 export function validateWipAssistanceEffectiveness(effectiveness: number): number {
   if (!Number.isFinite(effectiveness) || effectiveness < 0 || effectiveness > 1) {
     throw new Error("WIP assistance effectiveness must be between zero and one.");
@@ -132,6 +139,7 @@ export interface SimulationSettings {
   initialBacklog?: InitialBacklog;
   initialInventory?: InitialInventory;
   featureBacklog?: FeatureBacklogConfig;
+  featureFocus?: FeatureFocusPolicy | null;
   wipAssistanceEffectiveness?: number;
   operatingAssumptions?: Partial<Record<ActiveStage, OperatingAssumptions>>;
   baseRates?: Partial<Record<ActiveStage, number>>;
@@ -152,6 +160,11 @@ export function withSimulationSettings(config: ScenarioConfig, settings: Simulat
   const featureBacklog = settings.featureBacklog === undefined
     ? (withArrival.featureBacklog ?? { featureCount: 0, minPbisPerFeature: 5, maxPbisPerFeature: 10, baseBugEffort: 1, feedbackDelayEffortFactor: 0.1 })
     : validateFeatureBacklog(settings.featureBacklog);
+  const featureFocus = settings.featureFocus === undefined
+    ? withArrival.featureFocus
+    : settings.featureFocus === null
+      ? undefined
+      : validateFeatureFocus(withArrival, settings.featureFocus);
   const withRates = withProcessingRates(withArrival, settings.baseRates ?? {});
   const wipAssistanceEffectiveness = settings.wipAssistanceEffectiveness === undefined
     ? (withRates.wipAssistanceEffectiveness ?? 0.75)
@@ -163,5 +176,5 @@ export function withSimulationSettings(config: ScenarioConfig, settings: Simulat
     : withOperating.incident;
   const swarm = settings.swarm ?? withOperating.swarm;
   if (swarm && active.length >= 2) validateSwarm(withOperating, swarm);
-  return { ...withOperating, initialBacklog, initialInventory, featureBacklog, wipAssistanceEffectiveness, incident, swarm: active.length >= 2 ? swarm : undefined };
+  return { ...withOperating, initialBacklog, initialInventory, featureBacklog, featureFocus, wipAssistanceEffectiveness, incident, swarm: active.length >= 2 ? swarm : undefined };
 }

@@ -47,6 +47,11 @@ export interface FeatureBacklogConfig {
   feedbackDelayEffortFactor: number;
 }
 
+export interface FeatureFocusPolicy {
+  /** First simulated day on which the completion focus is applied. */
+  startDay: number;
+}
+
 export interface Feature {
   id: string;
   title: string;
@@ -66,6 +71,7 @@ export interface ScenarioConfig {
   initialBacklog?: InitialBacklog;
   initialInventory?: InitialInventory;
   featureBacklog?: FeatureBacklogConfig;
+  featureFocus?: FeatureFocusPolicy;
   batchDays: number[];
   batchSize: number;
   baseRates: Partial<Record<ActiveStage, number>>;
@@ -131,6 +137,7 @@ export interface DailySnapshot {
   externalBacklog: number;
   capacityAssistance?: CapacityAssistance[];
   operatingCapacity?: DailyOperatingCapacity[];
+  featureFocus?: FeatureFocusState;
 }
 
 export interface CapacityAssistance {
@@ -138,6 +145,13 @@ export interface CapacityAssistance {
   to: ActiveStage;
   capacity: number;
   effectiveness: number;
+  reason?: "wip-assistance" | "completion-focus";
+  featureId?: string;
+}
+
+export interface FeatureFocusState {
+  id: string;
+  title: string;
 }
 
 export interface DailyOperatingCapacity {
@@ -158,6 +172,7 @@ export interface DailyLogEntry {
   day: number;
   seed: number;
   movements: DailyMovement[];
+  featureFocus?: FeatureFocusState;
 }
 
 export interface Metrics {

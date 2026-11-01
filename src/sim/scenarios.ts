@@ -25,15 +25,6 @@ const common = {
   },
 };
 
-const swarm = {
-  startDay: 45,
-  durationDays: 10,
-  sourceStage: "Development",
-  targetStage: "Test",
-  capacityShift: 0.5,
-  rampUpEffectiveness: 0.75,
-};
-
 export const scenarios: Record<ScenarioId, ScenarioConfig> = {
   baseline: {
     id: "baseline",
@@ -43,10 +34,10 @@ export const scenarios: Record<ScenarioId, ScenarioConfig> = {
   },
   swarm: {
     id: "swarm",
-    label: "Swarm Test",
-    summary: "Development lends capacity to Test for 10 days to relieve the bottleneck.",
+    label: "Start Finishing - Stop Starting",
+    summary: "Finish the oldest incomplete Feature before admitting another, using unused Development capacity to help Test.",
     ...common,
-    swarm,
+    featureFocus: { startDay: 0 },
   },
   wip: {
     id: "wip",
@@ -57,11 +48,11 @@ export const scenarios: Record<ScenarioId, ScenarioConfig> = {
   },
   combined: {
     id: "combined",
-    label: "Combined",
-    summary: "WIP limits stabilize flow while a temporary swarm helps the Test constraint.",
+    label: "WIP Limits + Start Finishing",
+    summary: "Stage WIP limits stabilize pull flow while finishing focus completes one Feature before starting the next.",
     ...common,
     wipLimits: { Development: 5, Integration: 5, Test: 5 },
-    swarm,
+    featureFocus: { startDay: 0 },
   },
 };
 

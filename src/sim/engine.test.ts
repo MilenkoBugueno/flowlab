@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { calculateMetrics, effectiveCapacityFor, runScenario } from "./engine";
 import { runMeanScenario, validateMeanSeedCount } from "./mean";
 import { scenarios } from "./scenarios";
-import { validateFeatureBacklog, validateInitialBacklog, validateInitialInventory, validateOperatingAssumptions, validateWipAssistanceEffectiveness } from "./settings";
+import { validateFeatureBacklog, validateFeatureFocus, validateInitialBacklog, validateInitialInventory, validateOperatingAssumptions, validateWipAssistanceEffectiveness } from "./settings";
 import { withWorkflow } from "./workflow";
 
 describe("FlowLab simulation engine", () => {
@@ -18,7 +18,11 @@ describe("FlowLab simulation engine", () => {
     });
     expect(scenarios.baseline.wipLimits).toBeUndefined();
     expect(scenarios.baseline.incident).toBeUndefined();
-    expect(scenarios.swarm.swarm).toMatchObject({ sourceStage: "Development", targetStage: "Test" });
+    expect(scenarios.baseline.featureFocus).toBeUndefined();
+    expect(scenarios.swarm.featureFocus).toEqual({ startDay: 0 });
+    expect(scenarios.swarm.swarm).toBeUndefined();
+    expect(scenarios.combined.featureFocus).toEqual({ startDay: 0 });
+    expect(scenarios.combined.wipLimits).toEqual({ Development: 5, Integration: 5, Test: 5 });
   });
 
   it("is deterministic for a fixed seed", () => {
@@ -98,7 +102,11 @@ describe("FlowLab simulation engine", () => {
   it("reduces Test queue-days with a scheduled swarm for the default seed", () => {
     const initialBacklog = { pbiCount: 200, bugCount: 0 };
     const baseline = runScenario({ ...scenarios.baseline, initialBacklog }, 42);
-    const swarm = runScenario({ ...scenarios.swarm, initialBacklog }, 42);
+    const swarm = runScenario({
+      ...scenarios.baseline,
+      initialBacklog,
+      swarm: { startDay: 45, durationDays: 10, sourceStage: "Development", targetStage: "Test", capacityShift: 0.5, rampUpEffectiveness: 0.75 },
+    }, 42);
     expect(swarm.metrics.reviewQueueDays).toBeLessThan(baseline.metrics.reviewQueueDays);
   });
 
@@ -133,11 +141,10 @@ describe("FlowLab simulation engine", () => {
     ]));
   });
 
-  it("keeps named swarm stages attached when a state is inserted", () => {
+  it("keeps finishing focus attached when a state is inserted", () => {
     const config = withWorkflow(scenarios.combined, ["Ready", "Discovery", "Development", "Review", "Test", "Done"]);
     expect(config.incident).toBeUndefined();
-    expect(config.swarm?.sourceStage).toBe("Development");
-    expect(config.swarm?.targetStage).toBe("Test");
+    expect(config.featureFocus).toEqual({ startDay: 0 });
   });
 
   it("keeps the demand stream identical across scenarios for the same seed", () => {
@@ -446,6 +453,82 @@ describe("FlowLab simulation engine", () => {
   it("validates feature backlog configuration", () => {
     expect(() => validateFeatureBacklog({ featureCount: -1, minPbisPerFeature: 5, maxPbisPerFeature: 10, baseBugEffort: 1, feedbackDelayEffortFactor: 0.1 })).toThrow("The initial feature count must be a non-negative whole number.");
     expect(() => validateFeatureBacklog({ featureCount: 1, minPbisPerFeature: 8, maxPbisPerFeature: 5, baseBugEffort: 1, feedbackDelayEffortFactor: 0.1 })).toThrow("The maximum PBIs per feature must be at least the minimum.");
+  });
+
+  it("focuses admissions on the oldest unfinished Feature", () => {
+    const result = runScenario({
+      ...scenarios.baseline,
+      horizonDays: 1,
+      warmupDays: 0,
+      arrivalRatePerDay: 100,
+      batchDays: [],
+      batchSize: 0,
+      initialInventory: {},
+      featureBacklog: { featureCount: 3, minPbisPerFeature: 2, maxPbisPerFeature: 2, baseBugEffort: 1, feedbackDelayEffortFactor: 0 },
+      featureFocus: { startDay: 0 },
+      baseRates: { Development: 2, Test: 1 },
+      serviceEffort: { Development: { min: 1, max: 1 }, Test: { min: 1, max: 1 } },
+      operatingAssumptions: {
+        Development: { focusWip: 2, maximumConcurrency: 2, taskSwitchingLossRatio: 0 },
+        Test: { focusWip: 2, maximumConcurrency: 2, taskSwitchingLossRatio: 0 },
+      },
+    }, 42);
+    const developmentAdmissions = result.events.filter((event) => event.type === "entered-stage" && event.stage === "Development");
+    expect(result.snapshots[0].featureFocus).toEqual({ id: "FEATURE-001", title: "Feature 001" });
+    expect(developmentAdmissions).toHaveLength(2);
+    expect(developmentAdmissions.every((event) => result.items.find((item) => item.id === event.itemId)?.featureId === "FEATURE-001")).toBe(true);
+    expect(result.items.filter((item) => item.featureId !== "FEATURE-001").every((item) => item.stage === "Backlog")).toBe(true);
+  });
+
+  it("uses unused Development capacity to help Test for the focused Feature", () => {
+    const result = runScenario({
+      ...scenarios.baseline,
+      horizonDays: 3,
+      warmupDays: 0,
+      arrivalRatePerDay: 100,
+      batchDays: [],
+      batchSize: 0,
+      initialInventory: {},
+      featureBacklog: { featureCount: 2, minPbisPerFeature: 1, maxPbisPerFeature: 1, baseBugEffort: 1, feedbackDelayEffortFactor: 0 },
+      featureFocus: { startDay: 0 },
+      baseRates: { Development: 1, Test: 0.1 },
+      serviceEffort: { Development: { min: 1, max: 1 }, Test: { min: 5, max: 5 } },
+      operatingAssumptions: {
+        Development: { focusWip: 1, maximumConcurrency: 1, taskSwitchingLossRatio: 0 },
+        Test: { focusWip: 1, maximumConcurrency: 1, taskSwitchingLossRatio: 0 },
+      },
+    }, 42);
+    expect(result.snapshots[2].capacityAssistance).toContainEqual(expect.objectContaining({
+      from: "Development",
+      to: "Test",
+      reason: "completion-focus",
+      featureId: "FEATURE-001",
+    }));
+    expect(result.dailyLog[2].featureFocus?.id).toBe("FEATURE-001");
+  });
+
+  it("leaves a workflow without Features unaffected by finishing focus", () => {
+    const config = {
+      ...scenarios.baseline,
+      horizonDays: 1,
+      warmupDays: 0,
+      arrivalRatePerDay: 100,
+      batchDays: [],
+      batchSize: 0,
+      initialBacklog: { pbiCount: 2, bugCount: 0 },
+      initialInventory: undefined,
+      featureBacklog: { featureCount: 0, minPbisPerFeature: 1, maxPbisPerFeature: 1, baseBugEffort: 1, feedbackDelayEffortFactor: 0 },
+      featureFocus: { startDay: 0 },
+    };
+    const focused = runScenario(config, 42);
+    const regular = runScenario({ ...config, featureFocus: undefined }, 42);
+    expect(focused.snapshots).toEqual(regular.snapshots);
+    expect(focused.snapshots[0].featureFocus).toBeUndefined();
+  });
+
+  it("validates completion-focus start days", () => {
+    expect(() => validateFeatureFocus(scenarios.baseline, { startDay: -1 })).toThrow("The completion-focus start day must be within the simulation horizon.");
+    expect(() => validateFeatureFocus(scenarios.baseline, { startDay: scenarios.baseline.horizonDays })).toThrow("The completion-focus start day must be within the simulation horizon.");
   });
 
   it("rejects a maximum concurrency below focus WIP", () => {

@@ -6,7 +6,7 @@ import { runScenario } from "./sim/engine";
 import { runMeanScenario, validateMeanSeedCount } from "./sim/mean";
 import { scenarioList, scenarios } from "./sim/scenarios";
 import { withSimulationSettings } from "./sim/settings";
-import type { CapacityIncident, FeatureBacklogConfig, InitialInventory, Metrics, OperatingAssumptions, ScenarioId, SwarmPolicy } from "./sim/types";
+import type { CapacityIncident, FeatureBacklogConfig, FeatureFocusPolicy, InitialInventory, Metrics, OperatingAssumptions, ScenarioId, SwarmPolicy } from "./sim/types";
 import { activeStages, withWorkflow } from "./sim/workflow";
 
 const metricLabels: Array<[keyof Metrics, string, string]> = [
@@ -50,6 +50,10 @@ export default function App() {
   const [savedFeatureBacklog, setSavedFeatureBacklog] = useState<FeatureBacklogConfig>(defaultFeatureBacklog);
   const [featureBacklogDraft, setFeatureBacklogDraft] = useState<FeatureBacklogConfig>(defaultFeatureBacklog);
   const [featureBacklogError, setFeatureBacklogError] = useState<string>();
+  const [savedFeatureFocus, setSavedFeatureFocus] = useState<FeatureFocusPolicy | null>();
+  const [featureFocusEnabled, setFeatureFocusEnabled] = useState(false);
+  const [featureFocusStartDay, setFeatureFocusStartDay] = useState("0");
+  const [featureFocusError, setFeatureFocusError] = useState<string>();
   const [meanSeedCountInput, setMeanSeedCountInput] = useState("1");
   const [meanSeedCount, setMeanSeedCount] = useState(1);
   const [meanSeedError, setMeanSeedError] = useState<string>();
@@ -70,8 +74,8 @@ export default function App() {
   const seed = Number.isFinite(Number(seedInput)) ? Math.max(0, Math.floor(Number(seedInput))) : 42;
   const workflowConfig = useMemo(() => withWorkflow(scenarios[scenarioId], workflow), [scenarioId, workflow]);
   const selectedConfig = useMemo(
-    () => withSimulationSettings(workflowConfig, { arrivalRatePerDay: savedArrivalRate, initialInventory: inventoryForStages(savedInitialInventory, workflowConfig.workflow.stages), featureBacklog: savedFeatureBacklog, wipAssistanceEffectiveness: savedWipAssistanceEffectiveness, baseRates: savedRates, operatingAssumptions: savedOperatingAssumptions, incident: savedIncident, swarm: savedSwarm }),
-    [workflowConfig, savedArrivalRate, savedInitialInventory, savedFeatureBacklog, savedWipAssistanceEffectiveness, savedRates, savedOperatingAssumptions, savedIncident, savedSwarm],
+    () => withSimulationSettings(workflowConfig, { arrivalRatePerDay: savedArrivalRate, initialInventory: inventoryForStages(savedInitialInventory, workflowConfig.workflow.stages), featureBacklog: savedFeatureBacklog, featureFocus: savedFeatureFocus, wipAssistanceEffectiveness: savedWipAssistanceEffectiveness, baseRates: savedRates, operatingAssumptions: savedOperatingAssumptions, incident: savedIncident, swarm: savedSwarm }),
+    [workflowConfig, savedArrivalRate, savedInitialInventory, savedFeatureBacklog, savedFeatureFocus, savedWipAssistanceEffectiveness, savedRates, savedOperatingAssumptions, savedIncident, savedSwarm],
   );
   const baselineConfig = useMemo(
     () => withSimulationSettings(scenarios.baseline, { arrivalRatePerDay: savedArrivalRate, initialInventory: inventoryForStages(savedInitialInventory, scenarios.baseline.workflow.stages), featureBacklog: savedFeatureBacklog, wipAssistanceEffectiveness: savedWipAssistanceEffectiveness, operatingAssumptions: savedOperatingAssumptions }),
@@ -111,6 +115,10 @@ export default function App() {
 
   const updateScenario = (id: ScenarioId) => {
     setScenarioId(id);
+    setSavedFeatureFocus(undefined);
+    setFeatureFocusEnabled(scenarios[id].featureFocus !== undefined);
+    setFeatureFocusStartDay(String(scenarios[id].featureFocus?.startDay ?? 0));
+    setFeatureFocusError(undefined);
     setSelectedDay(50);
   };
 
@@ -196,6 +204,17 @@ export default function App() {
       setFeatureBacklogError(undefined);
     } catch (error) {
       setFeatureBacklogError(error instanceof Error ? error.message : "Unable to save the feature-backed backlog.");
+    }
+  };
+
+  const saveFeatureFocus = () => {
+    try {
+      const featureFocus = featureFocusEnabled ? { startDay: Number(featureFocusStartDay) } : null;
+      withSimulationSettings(workflowConfig, { featureFocus });
+      setSavedFeatureFocus(featureFocus);
+      setFeatureFocusError(undefined);
+    } catch (error) {
+      setFeatureFocusError(error instanceof Error ? error.message : "Unable to save finishing-focus settings.");
     }
   };
 
@@ -357,6 +376,14 @@ export default function App() {
 
           <details className="settings-panel">
             <summary>Interventions</summary>
+            <section className="intervention-editor" aria-labelledby="completion-focus-heading">
+              <h2 id="completion-focus-heading">Stop starting, start finishing</h2>
+              <p>Finish the oldest incomplete Feature before admitting another one. Unused Development capacity helps Test for that Feature.</p>
+              <label className="completion-focus-toggle"><span>Enable finishing focus</span><input type="checkbox" checked={featureFocusEnabled} onChange={(event) => setFeatureFocusEnabled(event.target.checked)} /></label>
+              <label>Start day<input type="number" min="0" step="1" disabled={!featureFocusEnabled} value={featureFocusStartDay} onChange={(event) => setFeatureFocusStartDay(event.target.value)} /></label>
+              <button type="button" onClick={saveFeatureFocus}>Save finishing focus</button>
+              {featureFocusError && <p className="settings-error" role="alert">{featureFocusError}</p>}
+            </section>
             <section className="intervention-editor" aria-labelledby="incident-heading">
               <h2 id="incident-heading">Capacity incident</h2>
               <label>Stage

@@ -19,9 +19,9 @@ The executable product behavior is expressed in `features/*.feature`. The Cucumb
 
 ## Prototype boundaries
 
-- Four fixed scenarios: Baseline, Swarm Test, WIP Limits, Combined.
+- Four fixed scenarios: Baseline, Start Finishing - Stop Starting, WIP Limits, and WIP Limits + Start Finishing.
 - Same seed means same demand stream for fair comparisons.
-- Test is the default bottleneck; swarming reassigns—not creates—capacity.
+- Test is the default bottleneck; finishing focus uses otherwise unused Development capacity to help Test without creating capacity.
 - WIP limits hold work visibly upstream rather than hiding it.
 
 This is a learning model, not a calibrated prediction of a specific organization.

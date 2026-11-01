@@ -195,6 +195,21 @@ function featureFlowConfig(overrides: Partial<ScenarioConfig> = {}): ScenarioCon
   };
 }
 
+function finishingFocusConfig(overrides: Partial<ScenarioConfig> = {}): ScenarioConfig {
+  return featureFlowConfig({
+    horizonDays: 12,
+    featureBacklog: { featureCount: 3, minPbisPerFeature: 2, maxPbisPerFeature: 2, baseBugEffort: 1, feedbackDelayEffortFactor: 0 },
+    featureFocus: { startDay: 0 },
+    baseRates: { Development: 2, Test: 1 },
+    serviceEffort: { Development: { min: 1, max: 1 }, Test: { min: 1, max: 1 } },
+    operatingAssumptions: {
+      Development: { focusWip: 2, maximumConcurrency: 2, taskSwitchingLossRatio: 0 },
+      Test: { focusWip: 2, maximumConcurrency: 2, taskSwitchingLossRatio: 0 },
+    },
+    ...overrides,
+  });
+}
+
 function updateFeatureBacklog(config: ScenarioConfig, updates: Partial<FeatureBacklogConfig>): ScenarioConfig {
   return withSimulationSettings(config, {
     featureBacklog: { ...(config.featureBacklog ?? { featureCount: 0, minPbisPerFeature: 5, maxPbisPerFeature: 10, baseBugEffort: 1, feedbackDelayEffortFactor: 0.1 }), ...updates },
@@ -206,7 +221,10 @@ Given("the standard FlowLab baseline scenario", function (this: FlowLabWorld) {
 });
 
 Given("the baseline scenario with a scheduled Test swarm", function (this: FlowLabWorld) {
-  this.config = withSeededBacklog(scenarios.swarm);
+  this.config = withSeededBacklog({
+    ...scenarios.baseline,
+    swarm: { startDay: 45, durationDays: 10, sourceStage: "Development", targetStage: "Test", capacityShift: 0.5, rampUpEffectiveness: 0.75 },
+  });
 });
 
 Given("the baseline scenario with Development, Integration, and Test WIP limits", function (this: FlowLabWorld) {
@@ -1546,7 +1564,7 @@ Given("{int} PBIs have completed Development", function (this: FlowLabWorld, pbi
 
 When("I simulate the next working day", function (this: FlowLabWorld) {
   assert.ok(this.config, "Expected a feature flow configuration");
-  this.result = runScenario({ ...this.config, horizonDays: 2 }, 42);
+  this.result = runScenario(this.config.featureFocus ? this.config : { ...this.config, horizonDays: 2 }, 42);
 });
 
 Then("the {int} developed PBIs wait for their feature's test gate", function (this: FlowLabWorld, pbiCount: number) {
@@ -1697,4 +1715,285 @@ Then("the feature completion day is the latest completion day of its PBIs and Bu
 
 Then("feature metrics count the feature once", function (this: FlowLabWorld) {
   assert.equal(resultFor(this).metrics.completedFeatures, 1);
+});
+
+Given("a feature-backed backlog with three Features in creation order", function (this: FlowLabWorld) {
+  this.config = finishingFocusConfig();
+});
+
+Given("Stop starting, start finishing begins on day {int}", function (this: FlowLabWorld, startDay: number) {
+  assert.ok(this.config, "Expected a feature-backed configuration");
+  this.config = { ...this.config, featureFocus: { startDay } };
+});
+
+When("I simulate the first working day", function (this: FlowLabWorld) {
+  assert.ok(this.config, "Expected a configured simulation");
+  this.result = runScenario({ ...this.config, horizonDays: 1 }, 42);
+});
+
+Then("Feature 001 is the current finishing focus", function (this: FlowLabWorld) {
+  assert.equal(resultFor(this).snapshots.at(-1)?.featureFocus?.id, "FEATURE-001");
+});
+
+Then("only Feature 001 work is admitted from Backlog into Development", function (this: FlowLabWorld) {
+  const result = resultFor(this);
+  const admissions = result.events.filter((event) => event.type === "entered-stage" && event.stage === "Development");
+  assert.ok(admissions.length > 0);
+  assert.ok(admissions.every((event) => result.items.find((item) => item.id === event.itemId)?.featureId === "FEATURE-001"));
+});
+
+Then("Feature 002 and Feature 003 work remain in Backlog", function (this: FlowLabWorld) {
+  const result = resultFor(this);
+  assert.ok(result.items.filter((item) => item.featureId === "FEATURE-002" || item.featureId === "FEATURE-003").every((item) => item.stage === "Backlog"));
+});
+
+Given("Feature 001 has unfinished PBIs or feedback Bugs", function (this: FlowLabWorld) {
+  this.config = finishingFocusConfig({
+    horizonDays: 2,
+    featureBacklog: { featureCount: 3, minPbisPerFeature: 3, maxPbisPerFeature: 3, baseBugEffort: 1, feedbackDelayEffortFactor: 0 },
+    baseRates: { Development: 0.5, Test: 1 },
+    serviceEffort: { Development: { min: 4, max: 4 }, Test: { min: 1, max: 1 } },
+  });
+});
+
+Given("Development has free capacity", function (this: FlowLabWorld) {
+  assert.ok(this.config, "Expected a configured simulation");
+});
+
+When("I simulate another working day with Stop starting, start finishing active", function (this: FlowLabWorld) {
+  assert.ok(this.config, "Expected a configured simulation");
+  this.result = runScenario(this.config, 42);
+});
+
+Then("no PBI or Bug belonging to a later Feature enters Development", function (this: FlowLabWorld) {
+  const result = resultFor(this);
+  const laterFeatureItemIds = new Set(result.items.filter((item) => item.featureId && item.featureId !== "FEATURE-001").map((item) => item.id));
+  assert.equal(result.events.filter((event) => event.type === "entered-stage" && event.stage === "Development" && laterFeatureItemIds.has(event.itemId)).length, 0);
+});
+
+Then("available capacity is used only for Feature 001 work when such work is ready", function (this: FlowLabWorld) {
+  const result = resultFor(this);
+  const started = result.events.filter((event) => event.type === "started" && event.stage === "Development");
+  assert.ok(started.length > 0);
+  assert.ok(started.every((event) => result.items.find((item) => item.id === event.itemId)?.featureId === "FEATURE-001"));
+});
+
+Given("the focused Feature has multiple PBIs in Development", function (this: FlowLabWorld) {
+  this.config = finishingFocusConfig({
+    horizonDays: 6,
+    featureBacklog: { featureCount: 2, minPbisPerFeature: 3, maxPbisPerFeature: 3, baseBugEffort: 1, feedbackDelayEffortFactor: 0 },
+    wipLimits: { Development: 3, Integration: 3, Test: 1 },
+  });
+});
+
+When("its PBIs complete Development at different times", function (this: FlowLabWorld) {
+  assert.ok(this.config, "Expected a configured simulation");
+  this.result = runScenario(this.config, 42);
+});
+
+Then("completed PBIs wait in Integration until the focused Feature's test gate opens", function (this: FlowLabWorld) {
+  const result = resultFor(this);
+  const firstFeature = result.features[0];
+  const developedOnDayZero = result.items.filter((item) => firstFeature.pbiIds.includes(item.id) && item.developedAt === 0);
+  assert.equal(developedOnDayZero.length, 2);
+  assert.equal(result.snapshots[1].states.Integration, 2);
+  assert.equal(result.snapshots[1].states.Test, 0);
+});
+
+Then("no later Feature is admitted while those PBIs wait", function (this: FlowLabWorld) {
+  const result = resultFor(this);
+  const earlyAdmissions = result.events.filter((event) => event.type === "entered-stage" && event.stage === "Development" && event.day <= 2);
+  assert.ok(earlyAdmissions.every((event) => result.items.find((item) => item.id === event.itemId)?.featureId === "FEATURE-001"));
+});
+
+Then("the focused PBIs enter Test according to the Test WIP limit and concurrency", function (this: FlowLabWorld) {
+  const result = resultFor(this);
+  const firstFeature = result.features[0];
+  assert.ok(result.events.some((event) => event.type === "entered-stage" && event.stage === "Test" && firstFeature.pbiIds.includes(event.itemId)));
+  assert.ok(result.snapshots.every((snapshot) => snapshot.states.Test <= 1));
+});
+
+Given("a focused Feature PBI completes Test and creates a feedback Bug", function (this: FlowLabWorld) {
+  this.config = finishingFocusConfig({
+    horizonDays: 7,
+    featureBacklog: { featureCount: 2, minPbisPerFeature: 1, maxPbisPerFeature: 1, baseBugEffort: 1, feedbackDelayEffortFactor: 0 },
+    baseRates: { Development: 1, Test: 1 },
+    operatingAssumptions: {
+      Development: { focusWip: 1, maximumConcurrency: 1, taskSwitchingLossRatio: 0 },
+      Test: { focusWip: 1, maximumConcurrency: 1, taskSwitchingLossRatio: 0 },
+    },
+  });
+});
+
+When("the feedback Bug is ready to enter Development", function (this: FlowLabWorld) {
+  assert.ok(this.config, "Expected a configured simulation");
+  this.result = runScenario(this.config, 42);
+});
+
+Then("the feedback Bug is admitted before work from a later Feature", function (this: FlowLabWorld) {
+  const result = resultFor(this);
+  const bug = result.items.find((item) => item.type === "Bug" && item.featureId === "FEATURE-001");
+  assert.ok(bug, "Expected the focused Feature to generate a Bug");
+  const bugAdmission = result.events.find((event) => event.type === "entered-stage" && event.stage === "Development" && event.itemId === bug.id);
+  assert.ok(bugAdmission, "Expected the Bug to enter Development");
+  const laterAdmission = result.events.find((event) => event.type === "entered-stage" && event.stage === "Development" && result.items.find((item) => item.id === event.itemId)?.featureId === "FEATURE-002");
+  assert.ok(!laterAdmission || bugAdmission.day < laterAdmission.day);
+});
+
+Then("the next Feature remains stopped until that Bug reaches Done", function (this: FlowLabWorld) {
+  const result = resultFor(this);
+  const bug = result.items.find((item) => item.type === "Bug" && item.featureId === "FEATURE-001");
+  const nextFeatureAdmission = result.events.find((event) => event.type === "entered-stage" && event.stage === "Development" && result.items.find((item) => item.id === event.itemId)?.featureId === "FEATURE-002");
+  assert.ok(bug?.completedAt !== undefined);
+  assert.ok(!nextFeatureAdmission || nextFeatureAdmission.day > (bug?.completedAt ?? Number.POSITIVE_INFINITY));
+});
+
+Given("the focused Feature has ready work in Test", function (this: FlowLabWorld) {
+  this.config = finishingFocusConfig({
+    horizonDays: 3,
+    featureBacklog: { featureCount: 2, minPbisPerFeature: 1, maxPbisPerFeature: 1, baseBugEffort: 1, feedbackDelayEffortFactor: 0 },
+    baseRates: { Development: 1, Test: 0.1 },
+    serviceEffort: { Development: { min: 1, max: 1 }, Test: { min: 5, max: 5 } },
+    operatingAssumptions: {
+      Development: { focusWip: 1, maximumConcurrency: 1, taskSwitchingLossRatio: 0 },
+      Test: { focusWip: 1, maximumConcurrency: 1, taskSwitchingLossRatio: 0 },
+    },
+  });
+});
+
+Given("no focused Feature work can use Development capacity today", function (this: FlowLabWorld) {
+  assert.ok(this.config, "Expected a configured simulation");
+});
+
+When("I simulate a working day with Stop starting, start finishing active", function (this: FlowLabWorld) {
+  assert.ok(this.config, "Expected a configured simulation");
+  this.result = runScenario(this.config, 42);
+});
+
+Then("available Development capacity is reassigned to Test for the focused Feature", function (this: FlowLabWorld) {
+  const assistance = resultFor(this).snapshots[2].capacityAssistance?.find((entry) => entry.reason === "completion-focus");
+  assert.deepEqual(assistance && { from: assistance.from, to: assistance.to, featureId: assistance.featureId }, { from: "Development", to: "Test", featureId: "FEATURE-001" });
+  assert.ok((assistance?.capacity ?? 0) > 0);
+});
+
+Then("the capacity transfer is recorded as a completion-focus swarm", function (this: FlowLabWorld) {
+  assert.ok(resultFor(this).snapshots.flatMap((snapshot) => snapshot.capacityAssistance ?? []).some((entry) => entry.reason === "completion-focus"));
+});
+
+Given("the focused Feature has work ready in Development", function (this: FlowLabWorld) {
+  this.config = finishingFocusConfig({
+    horizonDays: 1,
+    featureBacklog: { featureCount: 2, minPbisPerFeature: 2, maxPbisPerFeature: 2, baseBugEffort: 1, feedbackDelayEffortFactor: 0 },
+  });
+});
+
+Then("Development uses its capacity for focused Feature work before swarming Test", function (this: FlowLabWorld) {
+  const result = resultFor(this);
+  assert.equal(result.snapshots[0].operatingCapacity?.find((entry) => entry.stage === "Development")?.concurrentItems, 2);
+  assert.equal(result.snapshots[0].capacityAssistance?.some((entry) => entry.reason === "completion-focus"), false);
+});
+
+Given("Feature 001 is the finishing focus", function (this: FlowLabWorld) {
+  this.config = finishingFocusConfig({
+    horizonDays: 8,
+    featureBacklog: { featureCount: 2, minPbisPerFeature: 1, maxPbisPerFeature: 1, baseBugEffort: 1, feedbackDelayEffortFactor: 0 },
+    baseRates: { Development: 1, Test: 1 },
+    operatingAssumptions: {
+      Development: { focusWip: 1, maximumConcurrency: 1, taskSwitchingLossRatio: 0 },
+      Test: { focusWip: 1, maximumConcurrency: 1, taskSwitchingLossRatio: 0 },
+    },
+  });
+});
+
+Given("every Feature 001 PBI and feedback Bug has reached Done", function (this: FlowLabWorld) {
+  assert.ok(this.config, "Expected a configured simulation");
+});
+
+Then("Feature 001 is recorded as complete", function (this: FlowLabWorld) {
+  assert.equal(resultFor(this).features[0].completedAt, 6);
+});
+
+Then("Feature 002 becomes the finishing focus", function (this: FlowLabWorld) {
+  assert.equal(resultFor(this).snapshots[7].featureFocus?.id, "FEATURE-002");
+});
+
+Then("Feature 002 work may be admitted from Backlog into Development", function (this: FlowLabWorld) {
+  const result = resultFor(this);
+  assert.ok(result.events.some((event) => event.type === "entered-stage" && event.stage === "Development" && event.day === 7 && result.items.find((item) => item.id === event.itemId)?.featureId === "FEATURE-002"));
+});
+
+Given("Stop starting, start finishing is active", function (this: FlowLabWorld) {
+  this.config = finishingFocusConfig();
+});
+
+Given("Development, Integration, and Test each have an explicit WIP limit", function (this: FlowLabWorld) {
+  assert.ok(this.config, "Expected a configured simulation");
+  this.config = { ...this.config, wipLimits: { Development: 1, Integration: 1, Test: 1 } };
+});
+
+When("I simulate the workflow", function (this: FlowLabWorld) {
+  assert.ok(this.config, "Expected a configured simulation");
+  this.result = runScenario(this.config, 42);
+});
+
+Then("no focused Feature item enters a stage above that stage's WIP limit", function (this: FlowLabWorld) {
+  const result = resultFor(this);
+  assert.ok(result.snapshots.every((snapshot) => snapshot.states.Development <= 1 && snapshot.states.Integration <= 1 && snapshot.states.Test <= 1));
+});
+
+Then("work blocked by a full downstream WIP limit remains visibly upstream", function (this: FlowLabWorld) {
+  assert.ok(resultFor(this).snapshots.some((snapshot) => snapshot.states.Integration > 0));
+});
+
+Given("a backlog containing no Features", function (this: FlowLabWorld) {
+  this.config = finishingFocusConfig({
+    horizonDays: 1,
+    featureBacklog: { featureCount: 0, minPbisPerFeature: 1, maxPbisPerFeature: 1, baseBugEffort: 1, feedbackDelayEffortFactor: 0 },
+    initialInventory: undefined,
+    initialBacklog: { pbiCount: 2, bugCount: 0 },
+  });
+});
+
+When("I activate Stop starting, start finishing", function (this: FlowLabWorld) {
+  assert.ok(this.config, "Expected a configured simulation");
+  this.result = runScenario(this.config, 42);
+});
+
+Then("regular backlog admission and capacity behavior continue unchanged", function (this: FlowLabWorld) {
+  const result = resultFor(this);
+  assert.equal(result.snapshots[0].states.Development, 2);
+  assert.equal(result.events.filter((event) => event.type === "entered-stage" && event.stage === "Development").length, 2);
+});
+
+Then("no finishing focus is shown", function (this: FlowLabWorld) {
+  assert.ok(resultFor(this).snapshots.every((snapshot) => snapshot.featureFocus === undefined));
+});
+
+Given("Stop starting, start finishing is active for a feature-backed backlog", function (this: FlowLabWorld) {
+  this.config = finishingFocusConfig({
+    horizonDays: 3,
+    featureBacklog: { featureCount: 2, minPbisPerFeature: 1, maxPbisPerFeature: 1, baseBugEffort: 1, feedbackDelayEffortFactor: 0 },
+    baseRates: { Development: 1, Test: 0.1 },
+    serviceEffort: { Development: { min: 1, max: 1 }, Test: { min: 5, max: 5 } },
+    operatingAssumptions: {
+      Development: { focusWip: 1, maximumConcurrency: 1, taskSwitchingLossRatio: 0 },
+      Test: { focusWip: 1, maximumConcurrency: 1, taskSwitchingLossRatio: 0 },
+    },
+  });
+});
+
+When("I inspect a simulated day", function (this: FlowLabWorld) {
+  assert.ok(this.config, "Expected a configured simulation");
+  this.result = runScenario(this.config, 42);
+});
+
+Then("the CFD day inspector identifies the current finishing focus", function (this: FlowLabWorld) {
+  const result = resultFor(this);
+  assert.equal(result.snapshots[2].featureFocus?.title, "Feature 001");
+});
+
+Then("the daily log identifies the focused Feature and any completion-focus swarm", function (this: FlowLabWorld) {
+  const result = resultFor(this);
+  assert.equal(result.dailyLog[2].featureFocus?.id, "FEATURE-001");
+  assert.ok(result.snapshots[2].capacityAssistance?.some((entry) => entry.reason === "completion-focus"));
 });
