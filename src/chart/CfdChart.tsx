@@ -14,9 +14,11 @@ interface Props {
   onSelectDay: (day: number) => void;
   showInactiveWork: boolean;
   onShowInactiveWorkChange: (show: boolean) => void;
+  showFeatureCompletions: boolean;
+  onShowFeatureCompletionsChange: (show: boolean) => void;
 }
 
-export function CfdChart({ result, selectedDay, onSelectDay, showInactiveWork, onShowInactiveWorkChange }: Props) {
+export function CfdChart({ result, selectedDay, onSelectDay, showInactiveWork, onShowInactiveWorkChange, showFeatureCompletions, onShowFeatureCompletionsChange }: Props) {
   const svgRef = useRef<SVGSVGElement>(null);
   const { config, snapshots } = result;
   const meanRunCount = "seeds" in result ? result.seeds.length : 1;
@@ -50,6 +52,21 @@ export function CfdChart({ result, selectedDay, onSelectDay, showInactiveWork, o
   const selected = snapshots[selectedDay] ?? snapshots.at(-1);
   const ticks = x.ticks(6);
   const yTicks = y.ticks(5);
+  const featureCompletions = "features" in result
+    ? Array.from(
+      result.features
+        .filter((feature) => feature.completedAt !== undefined)
+        .reduce((byDay, feature) => {
+          const day = feature.completedAt as number;
+          const titles = byDay.get(day) ?? [];
+          titles.push(feature.title);
+          byDay.set(day, titles);
+          return byDay;
+        }, new Map<number, string[]>()),
+      ([day, titles]) => ({ day, titles }),
+    )
+    : [];
+  const canShowFeatureCompletions = "features" in result;
 
   const selectFromPointer = (event: React.MouseEvent<SVGSVGElement>) => {
     const svg = svgRef.current;
@@ -69,6 +86,9 @@ export function CfdChart({ result, selectedDay, onSelectDay, showInactiveWork, o
         <div className="chart-controls">
           <p className="chart-hint">{meanRunCount > 1 ? `Mean of ${meanRunCount} simulations · select a day to inspect averages.` : "Select a day on the chart to inspect its queues."}</p>
           <label className="cfd-inactive-toggle"><input type="checkbox" checked={showInactiveWork} onChange={(event) => onShowInactiveWorkChange(event.target.checked)} />Show inactive work</label>
+          <label className="cfd-feature-toggle" title={canShowFeatureCompletions ? "Show one marker per Feature completion day." : "Feature completion markers belong to individual simulation runs."}>
+            <input type="checkbox" checked={showFeatureCompletions} disabled={!canShowFeatureCompletions} onChange={(event) => onShowFeatureCompletionsChange(event.target.checked)} />Show completed Features
+          </label>
         </div>
       </div>
       <div className="legend" aria-label="CFD state legend">
@@ -79,6 +99,7 @@ export function CfdChart({ result, selectedDay, onSelectDay, showInactiveWork, o
           <span className="activity-key"><i className="active-key" />Active work</span>
           <span className="activity-key"><i className="inactive-key" />Inactive / waiting</span>
         </>}
+        {showFeatureCompletions && canShowFeatureCompletions && <span className="feature-completion-key"><i />Feature completed</span>}
       </div>
       <svg
         ref={svgRef}
@@ -113,6 +134,15 @@ export function CfdChart({ result, selectedDay, onSelectDay, showInactiveWork, o
                 <path d={activeArea(series) ?? ""} fill={colours[series.key]} className="active-area" />
               </>
             )}
+          </g>
+        ))}
+        {showFeatureCompletions && featureCompletions.map(({ day, titles }) => (
+          <g key={`feature-completion-${day}`} className="feature-completion-marker">
+            <title>{titles.length === 1 ? `${titles[0]} completed on day ${day}` : `${titles.length} Features completed on day ${day}`}</title>
+            <line x1={x(day)} x2={x(day)} y1={margin.top} y2={height - margin.bottom} />
+            <circle cx={x(day)} cy={margin.top + 10} r="7" />
+            <path d={`M ${x(day) - 3} ${margin.top + 10} l 2.2 2.4 l 4.2 -5`} />
+            {titles.length > 1 && <text x={x(day) + 10} y={margin.top + 14}>×{titles.length}</text>}
           </g>
         ))}
         <line x1={x(selectedDay)} x2={x(selectedDay)} y1={margin.top} y2={height - margin.bottom} className="selected-day" />

@@ -88,6 +88,7 @@ export default function App() {
   const [selectedDay, setSelectedDay] = useState(50);
   const [visualization, setVisualization] = useState<"cfd" | "kanban">("cfd");
   const [showInactiveWork, setShowInactiveWork] = useState(true);
+  const [showFeatureCompletions, setShowFeatureCompletions] = useState(false);
   const scenario = scenarios[scenarioId];
   const activeWorkflowStages = activeStages(workflowConfig.workflow);
   const initialInventoryStages = workflowConfig.workflow.stages.slice(0, -1);
@@ -411,7 +412,7 @@ export default function App() {
             <button type="button" role="tab" aria-selected={visualization === "kanban"} className={visualization === "kanban" ? "active" : ""} onClick={() => setVisualization("kanban")}>Kanban</button>
           </div>
           {visualization === "cfd" ? (
-            <CfdChart result={selected} selectedDay={selectedDay} onSelectDay={setSelectedDay} showInactiveWork={showInactiveWork} onShowInactiveWorkChange={setShowInactiveWork} />
+            <CfdChart result={selected} selectedDay={selectedDay} onSelectDay={setSelectedDay} showInactiveWork={showInactiveWork} onShowInactiveWorkChange={setShowInactiveWork} showFeatureCompletions={showFeatureCompletions} onShowFeatureCompletionsChange={setShowFeatureCompletions} />
           ) : "dailyLog" in selected ? (
             <KanbanBoard result={selected} selectedDay={selectedDay} onSelectDay={setSelectedDay} />
           ) : (
