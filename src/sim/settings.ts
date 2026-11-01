@@ -1,4 +1,4 @@
-import type { ActiveStage, CapacityIncident, ScenarioConfig, SwarmPolicy } from "./types";
+import type { ActiveStage, CapacityIncident, OperatingAssumptions, ScenarioConfig, SwarmPolicy } from "./types";
 import { activeStages } from "./workflow";
 
 function assertPositiveRate(rate: number, label: string) {
@@ -33,6 +33,27 @@ export function validateWipAssistanceEffectiveness(effectiveness: number): numbe
   return effectiveness;
 }
 
+export function validateOperatingAssumptions(assumptions: OperatingAssumptions): OperatingAssumptions {
+  if (!Number.isInteger(assumptions.focusWip) || assumptions.focusWip < 1) {
+    throw new Error("Focus WIP must be a positive whole number.");
+  }
+  if (!Number.isInteger(assumptions.maximumConcurrency) || assumptions.maximumConcurrency < assumptions.focusWip) {
+    throw new Error("Maximum concurrency must be at least focus WIP.");
+  }
+  if (!Number.isFinite(assumptions.taskSwitchingLossRatio) || assumptions.taskSwitchingLossRatio < 0 || assumptions.taskSwitchingLossRatio > 1) {
+    throw new Error("The task-switching loss ratio must be between zero and one.");
+  }
+  return assumptions;
+}
+
+export function withOperatingAssumptions(config: ScenarioConfig, updates: Partial<Record<ActiveStage, OperatingAssumptions>>): ScenarioConfig {
+  const operatingAssumptions = Object.fromEntries(activeStages(config.workflow).map((stage) => {
+    const assumptions = updates[stage] ?? config.operatingAssumptions?.[stage] ?? { focusWip: 2, maximumConcurrency: 16, taskSwitchingLossRatio: 0.2 };
+    return [stage, validateOperatingAssumptions(assumptions)];
+  }));
+  return { ...config, operatingAssumptions };
+}
+
 export function validateIncident(config: ScenarioConfig, incident: CapacityIncident): CapacityIncident {
   const active = activeStages(config.workflow);
   assertActiveStage(incident.stage, active, "The incident stage");
@@ -64,6 +85,7 @@ export function validateSwarm(config: ScenarioConfig, swarm: SwarmPolicy): Swarm
 export interface SimulationSettings {
   arrivalRatePerDay?: number;
   wipAssistanceEffectiveness?: number;
+  operatingAssumptions?: Partial<Record<ActiveStage, OperatingAssumptions>>;
   baseRates?: Partial<Record<ActiveStage, number>>;
   incident?: CapacityIncident;
   swarm?: SwarmPolicy;
@@ -77,11 +99,12 @@ export function withSimulationSettings(config: ScenarioConfig, settings: Simulat
   const wipAssistanceEffectiveness = settings.wipAssistanceEffectiveness === undefined
     ? (withRates.wipAssistanceEffectiveness ?? 0.75)
     : validateWipAssistanceEffectiveness(settings.wipAssistanceEffectiveness);
-  const active = activeStages(withRates.workflow);
+  const withOperating = withOperatingAssumptions(withRates, settings.operatingAssumptions ?? {});
+  const active = activeStages(withOperating.workflow);
   const incident = settings.incident
-    ? validateIncident(withRates, settings.incident)
-    : withRates.incident;
-  const swarm = settings.swarm ?? withRates.swarm;
-  if (swarm && active.length >= 2) validateSwarm(withRates, swarm);
-  return { ...withRates, wipAssistanceEffectiveness, incident, swarm: active.length >= 2 ? swarm : undefined };
+    ? validateIncident(withOperating, settings.incident)
+    : withOperating.incident;
+  const swarm = settings.swarm ?? withOperating.swarm;
+  if (swarm && active.length >= 2) validateSwarm(withOperating, swarm);
+  return { ...withOperating, wipAssistanceEffectiveness, incident, swarm: active.length >= 2 ? swarm : undefined };
 }

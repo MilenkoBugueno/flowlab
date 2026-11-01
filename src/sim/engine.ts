@@ -7,6 +7,7 @@ import type {
   FlowEvent,
   ItemStatus,
   Metrics,
+  OperatingAssumptions,
   ScenarioConfig,
   SimulationResult,
   Stage,
@@ -58,9 +59,22 @@ function stageCount(items: WorkItem[], stage: Stage): number {
   return items.filter((item) => item.stage === stage).length;
 }
 
+function concurrentItemCount(items: WorkItem[], stage: ActiveStage): number {
+  return items.filter((item) => item.stage === stage && item.status === "active").length;
+}
+
+export function effectiveCapacityFor(baseCapacity: number, concurrentItems: number, assumptions: OperatingAssumptions): { effectiveCapacity: number; taskSwitchingLoss: number } {
+  const overloadFraction = concurrentItems > assumptions.focusWip
+    ? (concurrentItems - assumptions.focusWip) / concurrentItems
+    : 0;
+  const taskSwitchingLoss = baseCapacity * assumptions.taskSwitchingLossRatio * overloadFraction;
+  return { effectiveCapacity: baseCapacity - taskSwitchingLoss, taskSwitchingLoss };
+}
+
 function canEnter(items: WorkItem[], target: ActiveStage, config: ScenarioConfig): boolean {
-  const limit = config.wipLimits?.[target];
-  return limit === undefined || stageCount(items, target) < limit;
+  const wipLimit = config.wipLimits?.[target];
+  const withinWipLimit = wipLimit === undefined || stageCount(items, target) < wipLimit;
+  return withinWipLimit;
 }
 
 export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult {
@@ -131,26 +145,38 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
     }
   };
 
+  const activateWork = (day: number, stage: ActiveStage, maximumConcurrency: number) => {
+    const activeCount = concurrentItemCount(items, stage);
+    const openSlots = Math.max(0, maximumConcurrency - activeCount);
+    const waiting = items
+      .filter((item) => item.stage === stage && item.status === "waiting")
+      .sort((a, b) => (a.enteredAt[stage] ?? 0) - (b.enteredAt[stage] ?? 0));
+    for (const item of waiting.slice(0, openSlots)) {
+      item.status = "active";
+      item.startedAt[stage] = day;
+      record(day, "started", item, stage);
+    }
+  };
+
   const processWork = (day: number, stage: ActiveStage, availableCapacity: number): number => {
     let remainingCapacity = availableCapacity;
-    while (remainingCapacity > 0) {
-      let currentlyActive = items.find((item) => item.stage === stage && item.status === "active");
-      if (!currentlyActive) {
-        currentlyActive = items
-          .filter((item) => item.stage === stage && item.status === "waiting")
-          .sort((a, b) => (a.enteredAt[stage] ?? 0) - (b.enteredAt[stage] ?? 0))[0];
-        if (!currentlyActive) return remainingCapacity;
-        currentlyActive.status = "active";
-        currentlyActive.startedAt[stage] = day;
-        record(day, "started", currentlyActive, stage);
+    while (remainingCapacity > 1e-9) {
+      const currentlyActive = items.filter((item) => item.stage === stage && item.status === "active");
+      if (!currentlyActive.length) return remainingCapacity;
+      const equalShare = remainingCapacity / currentlyActive.length;
+      let capacityApplied = 0;
+      for (const item of currentlyActive) {
+        const effortApplied = Math.min(item.effortRemaining, equalShare);
+        item.effortRemaining -= effortApplied;
+        capacityApplied += effortApplied;
+        if (item.effortRemaining <= 1e-9) {
+          item.effortRemaining = 0;
+          item.status = "blocked";
+          record(day, "blocked", item, stage);
+        }
       }
-      const effortApplied = Math.min(currentlyActive.effortRemaining, remainingCapacity);
-      currentlyActive.effortRemaining -= effortApplied;
-      remainingCapacity -= effortApplied;
-      if (currentlyActive.effortRemaining > 0) return 0;
-      currentlyActive.effortRemaining = 0;
-      currentlyActive.status = "blocked";
-      record(day, "blocked", currentlyActive, stage);
+      if (capacityApplied <= 1e-9) return remainingCapacity;
+      remainingCapacity -= capacityApplied;
     }
     return 0;
   };
@@ -177,8 +203,19 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
     // admissions/pulls happen, then available stages begin work.
     [...active].reverse().forEach((stage) => moveBlocked(day, stage));
     pullEntryWork(day);
+    active.forEach((stage) => {
+      const maximumConcurrency = config.operatingAssumptions?.[stage]?.maximumConcurrency ?? 16;
+      activateWork(day, stage, maximumConcurrency);
+    });
+    const operatingCapacity = active.map((stage) => {
+      const baseCapacity = processingRateFor(stage, day, config);
+      const concurrentItems = concurrentItemCount(items, stage);
+      const assumptions = config.operatingAssumptions?.[stage] ?? { focusWip: 2, maximumConcurrency: 16, taskSwitchingLossRatio: 0.2 };
+      const { effectiveCapacity, taskSwitchingLoss } = effectiveCapacityFor(baseCapacity, concurrentItems, assumptions);
+      return { stage, concurrentItems, baseCapacity, effectiveCapacity, taskSwitchingLoss };
+    });
     const unusedCapacity = Object.fromEntries(
-      active.map((stage) => [stage, processWork(day, stage, processingRateFor(stage, day, config))]),
+      operatingCapacity.map(({ stage, effectiveCapacity }) => [stage, processWork(day, stage, effectiveCapacity)]),
     );
     const capacityAssistance = [];
     const effectiveness = config.wipAssistanceEffectiveness ?? 0.75;
@@ -211,6 +248,7 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
       completions: items.filter((item) => item.completedAt === day).length,
       externalBacklog: 0,
       capacityAssistance,
+      operatingCapacity,
     });
   }
 
@@ -223,13 +261,23 @@ export function calculateMetrics(items: WorkItem[], snapshots: DailySnapshot[], 
   const active = activeStages(config.workflow);
   const reviewStage = stages.find((stage) => stage.toLocaleLowerCase().includes("review")) ?? active.at(-1);
   const completed = items.filter((item) => item.completedAt !== undefined && item.completedAt >= config.warmupDays);
-  const cycleTimes = completed.map((item) => (item.completedAt ?? 0) - item.arrivedAt);
+  const cycleTimes = completed.flatMap((item) => {
+    const firstActiveStart = active
+      .map((stage) => item.startedAt[stage])
+      .filter((day): day is number => day !== undefined)
+      .sort((left, right) => left - right)[0];
+    return firstActiveStart === undefined ? [] : [(item.completedAt ?? 0) - firstActiveStart];
+  });
   const measuredDays = config.horizonDays - config.warmupDays;
   const observed = snapshots.filter((snapshot) => snapshot.day >= config.warmupDays);
   const wip = observed.map((snapshot) => stages.filter((stage) => stage !== exitStage).reduce((total, stage) => total + snapshot.states[stage], 0));
   const reviewQueueDays = reviewStage ? observed.reduce((total, snapshot) => total + snapshot.waiting[reviewStage], 0) : 0;
   const totalQueueDays = observed.reduce(
     (total, snapshot) => total + stages.filter((stage) => stage !== exitStage).reduce((sum, stage) => sum + snapshot.waiting[stage], 0),
+    0,
+  );
+  const totalTaskSwitchingLoss = observed.reduce(
+    (total, snapshot) => total + (snapshot.operatingCapacity ?? []).reduce((sum, capacity) => sum + capacity.taskSwitchingLoss, 0),
     0,
   );
   const throughputPerWeek = measuredDays ? (completed.length / measuredDays) * 5 : 0;
@@ -243,6 +291,7 @@ export function calculateMetrics(items: WorkItem[], snapshots: DailySnapshot[], 
     reviewQueueDays,
     totalQueueDays,
     meanWip: wip.length ? wip.reduce((total, value) => total + value, 0) / wip.length : 0,
+    totalTaskSwitchingLoss,
     littlesLawEstimate: meanCycle === null ? null : (throughputPerWeek / 5) * meanCycle,
   };
 }

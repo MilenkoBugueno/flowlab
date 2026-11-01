@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { runScenario } from "./engine";
+import { calculateMetrics, effectiveCapacityFor, runScenario } from "./engine";
 import { runMeanScenario, validateMeanSeedCount } from "./mean";
 import { scenarios } from "./scenarios";
-import { validateWipAssistanceEffectiveness } from "./settings";
+import { validateOperatingAssumptions, validateWipAssistanceEffectiveness } from "./settings";
 import { withWorkflow } from "./workflow";
 
 describe("FlowLab simulation engine", () => {
@@ -10,6 +10,10 @@ describe("FlowLab simulation engine", () => {
     expect(scenarios.baseline.workflow.stages).toEqual(["Backlog", "Development", "Test", "Done"]);
     expect(scenarios.baseline.arrivalRatePerDay).toBe(1.6);
     expect(scenarios.baseline.baseRates).toEqual({ Development: 1.4, Test: 0.7 });
+    expect(scenarios.baseline.operatingAssumptions).toEqual({
+      Development: { focusWip: 2, maximumConcurrency: 16, taskSwitchingLossRatio: 0.2 },
+      Test: { focusWip: 2, maximumConcurrency: 16, taskSwitchingLossRatio: 0.2 },
+    });
     expect(scenarios.baseline.incident).toBeUndefined();
     expect(scenarios.swarm.swarm).toMatchObject({ sourceStage: "Development", targetStage: "Test" });
   });
@@ -132,5 +136,58 @@ describe("FlowLab simulation engine", () => {
 
   it("rejects WIP assistance effectiveness outside the supported range", () => {
     expect(() => validateWipAssistanceEffectiveness(1.1)).toThrow("WIP assistance effectiveness must be between zero and one.");
+  });
+
+  it("reduces capacity proportionally when concurrent work exceeds focus WIP", () => {
+    const atFocus = effectiveCapacityFor(1.4, 2, { focusWip: 2, maximumConcurrency: 16, taskSwitchingLossRatio: 1 });
+    const fullPenalty = effectiveCapacityFor(1.4, 4, { focusWip: 2, maximumConcurrency: 16, taskSwitchingLossRatio: 1 });
+    const halfPenalty = effectiveCapacityFor(1.4, 4, { focusWip: 2, maximumConcurrency: 16, taskSwitchingLossRatio: 0.5 });
+    expect(atFocus).toEqual({ effectiveCapacity: 1.4, taskSwitchingLoss: 0 });
+    expect(fullPenalty).toEqual({ effectiveCapacity: 0.7, taskSwitchingLoss: 0.7 });
+    expect(halfPenalty.effectiveCapacity).toBeCloseTo(1.05);
+    expect(halfPenalty.taskSwitchingLoss).toBeCloseTo(0.35);
+  });
+
+  it("lets work enter a stage beyond operational concurrency while limiting active work", () => {
+    const config = {
+      ...scenarios.baseline,
+      horizonDays: 1,
+      warmupDays: 0,
+      arrivalRatePerDay: 0,
+      batchDays: [0],
+      batchSize: 17,
+      baseRates: { Development: 0.1, Test: 0.1 },
+      serviceEffort: { Development: { min: 10, max: 10 }, Test: { min: 10, max: 10 } },
+      operatingAssumptions: {
+        Development: { focusWip: 16, maximumConcurrency: 16, taskSwitchingLossRatio: 0 },
+        Test: { focusWip: 16, maximumConcurrency: 16, taskSwitchingLossRatio: 0 },
+      },
+      wipLimits: undefined,
+    };
+    const result = runScenario(config, 1);
+    expect(result.snapshots[0].states).toMatchObject({ Backlog: 0, Development: 17 });
+    expect(result.snapshots[0].active.Development).toBe(16);
+    expect(result.snapshots[0].waiting.Development).toBe(1);
+  });
+
+  it("measures cycle time from first active work rather than arrival", () => {
+    const metrics = calculateMetrics([
+      {
+        id: "FL-001",
+        arrivedAt: 0,
+        stage: "Done",
+        status: "done",
+        effortRemaining: 0,
+        enteredAt: { Backlog: 0, Development: 3, Test: 6 },
+        startedAt: { Development: 3, Test: 6 },
+        completedAt: 8,
+      },
+    ], [], { ...scenarios.baseline, warmupDays: 0 });
+    expect(metrics.medianCycleTime).toBe(5);
+    expect(metrics.p85CycleTime).toBe(5);
+  });
+
+  it("rejects a maximum concurrency below focus WIP", () => {
+    expect(() => validateOperatingAssumptions({ focusWip: 3, maximumConcurrency: 2, taskSwitchingLossRatio: 0.5 })).toThrow("Maximum concurrency must be at least focus WIP.");
   });
 });

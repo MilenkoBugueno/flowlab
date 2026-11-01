@@ -39,6 +39,7 @@ function meanMetrics(runs: ReturnType<typeof runScenario>[]): Metrics {
     reviewQueueDays: averageMetric("reviewQueueDays") ?? 0,
     totalQueueDays: averageMetric("totalQueueDays") ?? 0,
     meanWip: averageMetric("meanWip") ?? 0,
+    totalTaskSwitchingLoss: averageMetric("totalTaskSwitchingLoss") ?? 0,
     littlesLawEstimate: averageMetric("littlesLawEstimate"),
   };
 }

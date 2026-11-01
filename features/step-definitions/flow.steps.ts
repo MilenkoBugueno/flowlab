@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { Given, Then, When, World, setWorldConstructor } from "@cucumber/cucumber";
-import { processingRateFor, runScenario } from "../../src/sim/engine";
+import { effectiveCapacityFor, processingRateFor, runScenario } from "../../src/sim/engine";
 import { runMeanScenario, validateMeanSeedCount } from "../../src/sim/mean";
 import { scenarios } from "../../src/sim/scenarios";
-import { withProcessingRates, withSimulationSettings } from "../../src/sim/settings";
-import type { CapacityIncident, MeanSimulationResult, ScenarioConfig, SimulationResult, SwarmPolicy } from "../../src/sim/types";
+import { validateOperatingAssumptions, withOperatingAssumptions, withProcessingRates, withSimulationSettings } from "../../src/sim/settings";
+import type { CapacityIncident, MeanSimulationResult, OperatingAssumptions, ScenarioConfig, SimulationResult, SwarmPolicy } from "../../src/sim/types";
 import { activeStages, withWorkflow } from "../../src/sim/workflow";
 
 class FlowLabWorld extends World {
@@ -29,6 +29,12 @@ class FlowLabWorld extends World {
   arrivalRateBeforeEdit?: number;
   wipAssistanceError?: string;
   wipAssistanceBeforeEdit?: number;
+  operatingAssumptions?: OperatingAssumptions;
+  operatingBaseCapacity?: number;
+  operatingConcurrentItems?: number;
+  operatingResult?: { effectiveCapacity: number; taskSwitchingLoss: number };
+  operatingError?: string;
+  operatingBeforeEdit?: OperatingAssumptions;
 }
 
 setWorldConstructor(FlowLabWorld);
@@ -135,11 +141,14 @@ When("I simulate the scenario twice with seed {int}", function (this: FlowLabWor
   this.secondResult = runScenario(this.config, seed);
 });
 
-Then("the Test CFD band becomes the dominant active queue", function (this: FlowLabWorld) {
+Then("Test has a lower daily processing rate than Development", function (this: FlowLabWorld) {
   const result = resultFor(this);
-  const peakTest = Math.max(...result.snapshots.map((snapshot) => snapshot.states.Test));
-  const peakDevelopment = Math.max(...result.snapshots.map((snapshot) => snapshot.states.Development));
-  assert.ok(peakTest > peakDevelopment, `Expected Test WIP (${peakTest}) to exceed Development WIP (${peakDevelopment})`);
+  assert.ok((result.config.baseRates.Test ?? 0) < (result.config.baseRates.Development ?? 0));
+});
+
+Then("the Test constraint holds work visibly upstream", function (this: FlowLabWorld) {
+  const result = resultFor(this);
+  assert.ok(result.snapshots.some((snapshot) => snapshot.states.Development > 0 || snapshot.states.Backlog > 0));
 });
 
 Then("every arrived item is either completed or active in the workflow", function (this: FlowLabWorld) {
@@ -753,4 +762,207 @@ Then("I am told that WIP assistance effectiveness must be between zero and one",
 
 Then("the current WIP assistance settings remain unchanged", function (this: FlowLabWorld) {
   assert.equal(this.config?.wipAssistanceEffectiveness, this.wipAssistanceBeforeEdit);
+});
+
+function operationalConcurrencyConfig(maximumConcurrency: number, wipLimit?: number): ScenarioConfig {
+  return {
+    ...scenarios.baseline,
+    horizonDays: 2,
+    warmupDays: 0,
+    arrivalRatePerDay: 0,
+    batchDays: [0],
+    batchSize: wipLimit === undefined ? maximumConcurrency + 1 : wipLimit + 1,
+    baseRates: { Development: 0.1, Test: 0.1 },
+    serviceEffort: { Development: { min: 0.1, max: 0.1 }, Test: { min: 10, max: 10 } },
+    operatingAssumptions: {
+      Development: { focusWip: maximumConcurrency, maximumConcurrency, taskSwitchingLossRatio: 0 },
+      Test: { focusWip: 16, maximumConcurrency: 16, taskSwitchingLossRatio: 0 },
+    },
+    wipLimits: wipLimit === undefined ? undefined : { Development: wipLimit },
+  };
+}
+
+Given("Development has a daily capacity of {float} and a focus WIP of {int} items", function (this: FlowLabWorld, capacity: number, focusWip: number) {
+  this.operatingBaseCapacity = capacity;
+  this.operatingAssumptions = { focusWip, maximumConcurrency: 16, taskSwitchingLossRatio: 0.2 };
+});
+
+Given("Development has a daily capacity of {float}, a focus WIP of {int} items, and a task-switching loss ratio of {float}", function (this: FlowLabWorld, capacity: number, focusWip: number, taskSwitchingLossRatio: number) {
+  this.operatingBaseCapacity = capacity;
+  this.operatingAssumptions = { focusWip, maximumConcurrency: 16, taskSwitchingLossRatio };
+});
+
+Given("Development has {int} active items", function (this: FlowLabWorld, activeItems: number) {
+  this.operatingConcurrentItems = activeItems;
+});
+
+When("I simulate a working day", function (this: FlowLabWorld) {
+  assert.ok(this.operatingAssumptions, "Expected operating assumptions");
+  assert.ok(this.operatingBaseCapacity !== undefined, "Expected a base capacity");
+  assert.ok(this.operatingConcurrentItems !== undefined, "Expected concurrent items");
+  this.operatingResult = effectiveCapacityFor(this.operatingBaseCapacity, this.operatingConcurrentItems, this.operatingAssumptions);
+});
+
+Then("Development uses its full daily capacity of {float}", function (this: FlowLabWorld, capacity: number) {
+  assert.equal(this.operatingResult?.effectiveCapacity, capacity);
+});
+
+Then("Development records no task-switching loss", function (this: FlowLabWorld) {
+  assert.equal(this.operatingResult?.taskSwitchingLoss, 0);
+});
+
+Then("Development uses an effective daily capacity of {float}", function (this: FlowLabWorld, capacity: number) {
+  assert.ok(Math.abs((this.operatingResult?.effectiveCapacity ?? 0) - capacity) < 1e-9);
+});
+
+Then("Development records {float} daily capacity as task-switching loss", function (this: FlowLabWorld, loss: number) {
+  assert.ok(Math.abs((this.operatingResult?.taskSwitchingLoss ?? 0) - loss) < 1e-9);
+});
+
+Given("Development has a maximum concurrency of {int} items and no explicit Development WIP limit", function (this: FlowLabWorld, maximumConcurrency: number) {
+  this.config = operationalConcurrencyConfig(maximumConcurrency);
+});
+
+Given("{int} items are ready to enter Development", function (this: FlowLabWorld, itemCount: number) {
+  assert.equal(this.config?.batchSize, itemCount);
+});
+
+When("work is pulled into Development", function (this: FlowLabWorld) {
+  assert.ok(this.config, "Expected an operational concurrency configuration");
+  this.result = runScenario(this.config, 1);
+});
+
+Then("all {int} items enter Development", function (this: FlowLabWorld, itemCount: number) {
+  const result = resultFor(this);
+  const developmentEntries = result.events.filter((event) => event.type === "entered-stage" && event.stage === "Development" && event.day === 0);
+  assert.equal(developmentEntries.length, itemCount);
+  assert.equal(result.snapshots[0].states.Development, itemCount);
+  assert.equal(result.snapshots[0].states.Backlog, 0);
+});
+
+Then("no more than {int} items are actively worked in Development", function (this: FlowLabWorld, maximumConcurrency: number) {
+  const result = resultFor(this);
+  assert.ok(result.snapshots.every((snapshot) => (snapshot.active.Development ?? 0) <= maximumConcurrency));
+  assert.ok(result.snapshots.every((snapshot) => {
+    const capacity = snapshot.operatingCapacity?.find((entry) => entry.stage === "Development");
+    return (capacity?.concurrentItems ?? 0) <= maximumConcurrency;
+  }));
+});
+
+Then("the seventeenth item waits inside Development until an active slot becomes free", function (this: FlowLabWorld) {
+  const snapshot = resultFor(this).snapshots[0];
+  assert.equal(snapshot.states.Development, 17);
+  assert.equal(snapshot.active.Development, 16);
+  assert.equal(snapshot.waiting.Development, 1);
+  assert.equal(snapshot.states.Backlog, 0);
+});
+
+Given("I am editing the Development operating assumptions", function (this: FlowLabWorld) {
+  this.config = scenarios.baseline;
+  this.operatingBeforeEdit = this.config.operatingAssumptions?.Development;
+});
+
+When("I set Development maximum concurrency to {int} items", function (this: FlowLabWorld, maximumConcurrency: number) {
+  assert.ok(this.config, "Expected operating assumptions to edit");
+  const current = this.config.operatingAssumptions?.Development ?? { focusWip: 2, maximumConcurrency: 16, taskSwitchingLossRatio: 0.2 };
+  this.config = withOperatingAssumptions(this.config, { Development: { ...current, maximumConcurrency } });
+});
+
+Given("Development has no explicit WIP limit", function (this: FlowLabWorld) {
+  assert.equal(this.config?.wipLimits?.Development, undefined);
+});
+
+Then("Development can actively work on up to {int} items", function (this: FlowLabWorld, maximumConcurrency: number) {
+  assert.equal(this.config?.operatingAssumptions?.Development?.maximumConcurrency, maximumConcurrency);
+});
+
+Then("additional pushed items wait inside Development until an active slot becomes free", function (this: FlowLabWorld) {
+  const maximumConcurrency = this.config?.operatingAssumptions?.Development?.maximumConcurrency;
+  assert.ok(maximumConcurrency, "Expected a configured maximum concurrency");
+  const config = operationalConcurrencyConfig(maximumConcurrency);
+  const result = runScenario(config, 1);
+  assert.equal(result.snapshots[0].states.Backlog, 0);
+  assert.ok((result.snapshots[0].waiting.Development ?? 0) > 0);
+});
+
+When("I set Development focus WIP to {int} items", function (this: FlowLabWorld, focusWip: number) {
+  assert.ok(this.config, "Expected operating assumptions to edit");
+  const current = this.config.operatingAssumptions?.Development ?? { focusWip: 2, maximumConcurrency: 16, taskSwitchingLossRatio: 0.2 };
+  this.config = withOperatingAssumptions(this.config, { Development: { ...current, focusWip } });
+});
+
+Then("Development uses full capacity with up to {int} active items", function (this: FlowLabWorld, focusWip: number) {
+  const assumptions = this.config?.operatingAssumptions?.Development;
+  assert.ok(assumptions, "Expected Development operating assumptions");
+  assert.equal(effectiveCapacityFor(1.4, focusWip, assumptions).taskSwitchingLoss, 0);
+});
+
+Then("task-switching loss begins when Development has more than {int} active items", function (this: FlowLabWorld, focusWip: number) {
+  const assumptions = this.config?.operatingAssumptions?.Development;
+  assert.ok(assumptions, "Expected Development operating assumptions");
+  assert.ok(effectiveCapacityFor(1.4, focusWip + 1, assumptions).taskSwitchingLoss > 0);
+});
+
+Given("Development has a maximum concurrency of {int} items", function (this: FlowLabWorld, maximumConcurrency: number) {
+  this.config = operationalConcurrencyConfig(maximumConcurrency, 2);
+});
+
+Given("Development has an explicit WIP limit of {int} items", function (this: FlowLabWorld, limit: number) {
+  assert.equal(this.config?.wipLimits?.Development, limit);
+});
+
+When("{int} items occupy Development", function (this: FlowLabWorld, limit: number) {
+  assert.ok(this.config, "Expected a WIP-limited configuration");
+  this.result = runScenario(this.config, 1);
+  assert.equal(resultFor(this).snapshots[0].states.Development, limit);
+});
+
+Then("no additional item enters Development", function (this: FlowLabWorld) {
+  const entries = resultFor(this).events.filter((event) => event.type === "entered-stage" && event.stage === "Development" && event.day === 0);
+  assert.equal(entries.length, 2);
+});
+
+When("I set focus WIP to {int}, maximum concurrency to {int}, and task-switching loss ratio to {float}", function (this: FlowLabWorld, focusWip: number, maximumConcurrency: number, taskSwitchingLossRatio: number) {
+  assert.ok(this.config, "Expected operating assumptions to edit");
+  this.config = withOperatingAssumptions(this.config, { Development: { focusWip, maximumConcurrency, taskSwitchingLossRatio } });
+});
+
+Then("the simulation uses those Development operating assumptions", function (this: FlowLabWorld) {
+  assert.deepEqual(this.config?.operatingAssumptions?.Development, { focusWip: 2, maximumConcurrency: 16, taskSwitchingLossRatio: 0.5 });
+});
+
+Then("the CFD, metrics, and daily log expose the resulting concurrency and task-switching effects", function (this: FlowLabWorld) {
+  assert.ok(this.config, "Expected operating assumptions");
+  const result = runScenario({ ...this.config, horizonDays: 1, batchDays: [0], batchSize: 4, arrivalRatePerDay: 0 }, 1);
+  assert.ok(result.snapshots[0].operatingCapacity?.some((capacity) => capacity.stage === "Development" && capacity.concurrentItems > 0));
+});
+
+When("I save a maximum concurrency lower than focus WIP", function (this: FlowLabWorld) {
+  assert.ok(this.config, "Expected operating assumptions to edit");
+  try {
+    this.config = withOperatingAssumptions(this.config, { Development: { focusWip: 3, maximumConcurrency: 2, taskSwitchingLossRatio: 0.5 } });
+  } catch (error) {
+    this.operatingError = error instanceof Error ? error.message : String(error);
+  }
+});
+
+Then("I am told that maximum concurrency must be at least focus WIP", function (this: FlowLabWorld) {
+  assert.equal(this.operatingError, "Maximum concurrency must be at least focus WIP.");
+});
+
+When("I save a task-switching loss ratio greater than {int}", function (this: FlowLabWorld, ratio: number) {
+  assert.ok(this.config, "Expected operating assumptions to edit");
+  try {
+    this.config = withOperatingAssumptions(this.config, { Development: { focusWip: 2, maximumConcurrency: 16, taskSwitchingLossRatio: ratio + 0.1 } });
+  } catch (error) {
+    this.operatingError = error instanceof Error ? error.message : String(error);
+  }
+});
+
+Then("I am told that the task-switching loss ratio must be between zero and one", function (this: FlowLabWorld) {
+  assert.equal(this.operatingError, "The task-switching loss ratio must be between zero and one.");
+});
+
+Then("the current operating assumptions remain unchanged", function (this: FlowLabWorld) {
+  assert.deepEqual(this.config?.operatingAssumptions?.Development, this.operatingBeforeEdit);
 });

@@ -5,19 +5,20 @@ import { runScenario } from "./sim/engine";
 import { runMeanScenario, validateMeanSeedCount } from "./sim/mean";
 import { scenarioList, scenarios } from "./sim/scenarios";
 import { withSimulationSettings } from "./sim/settings";
-import type { CapacityIncident, Metrics, ScenarioId, SwarmPolicy } from "./sim/types";
+import type { CapacityIncident, Metrics, OperatingAssumptions, ScenarioId, SwarmPolicy } from "./sim/types";
 import { activeStages, withWorkflow } from "./sim/workflow";
 
 const metricLabels: Array<[keyof Metrics, string, string]> = [
   ["completedItems", "Completed items", "More is better, if cycle time remains healthy."],
-  ["p85CycleTime", "p85 cycle time", "Days for 85% of completed work to flow through."],
+  ["p85CycleTime", "p85 cycle time", "Days from first active work to completion for 85% of completed work."],
   ["maxReviewWip", "Peak constraint WIP", "The highest number of items in the constrained workflow stage."],
   ["reviewQueueDays", "Constraint queue-days", "Total waiting pressure in the constrained workflow stage."],
+  ["totalTaskSwitchingLoss", "Task-switch loss", "Daily capacity lost to work beyond focus WIP."],
 ];
 
 function formatMetric(key: keyof Metrics, value: Metrics[keyof Metrics]) {
   if (value === null) return "—";
-  if (key === "p85CycleTime" || key === "medianCycleTime" || key === "meanWip" || key === "littlesLawEstimate") return Number(value).toFixed(1);
+  if (key === "p85CycleTime" || key === "medianCycleTime" || key === "meanWip" || key === "totalTaskSwitchingLoss" || key === "littlesLawEstimate") return Number(value).toFixed(1);
   return Number(value).toFixed(0);
 }
 
@@ -38,6 +39,8 @@ export default function App() {
   const [workflowError, setWorkflowError] = useState<string>();
   const [savedRates, setSavedRates] = useState<Record<string, number>>({});
   const [rateDraft, setRateDraft] = useState<Record<string, string>>({});
+  const [savedOperatingAssumptions, setSavedOperatingAssumptions] = useState<Partial<Record<string, OperatingAssumptions>>>({});
+  const [operatingDraft, setOperatingDraft] = useState<Partial<Record<string, OperatingAssumptions>>>({});
   const [capacityError, setCapacityError] = useState<string>();
   const [savedIncident, setSavedIncident] = useState<CapacityIncident>();
   const [savedSwarm, setSavedSwarm] = useState<SwarmPolicy>();
@@ -47,12 +50,12 @@ export default function App() {
   const seed = Number.isFinite(Number(seedInput)) ? Math.max(0, Math.floor(Number(seedInput))) : 42;
   const workflowConfig = useMemo(() => withWorkflow(scenarios[scenarioId], workflow), [scenarioId, workflow]);
   const selectedConfig = useMemo(
-    () => withSimulationSettings(workflowConfig, { arrivalRatePerDay: savedArrivalRate, wipAssistanceEffectiveness: savedWipAssistanceEffectiveness, baseRates: savedRates, incident: savedIncident, swarm: savedSwarm }),
-    [workflowConfig, savedArrivalRate, savedWipAssistanceEffectiveness, savedRates, savedIncident, savedSwarm],
+    () => withSimulationSettings(workflowConfig, { arrivalRatePerDay: savedArrivalRate, wipAssistanceEffectiveness: savedWipAssistanceEffectiveness, baseRates: savedRates, operatingAssumptions: savedOperatingAssumptions, incident: savedIncident, swarm: savedSwarm }),
+    [workflowConfig, savedArrivalRate, savedWipAssistanceEffectiveness, savedRates, savedOperatingAssumptions, savedIncident, savedSwarm],
   );
   const baselineConfig = useMemo(
-    () => withSimulationSettings(scenarios.baseline, { arrivalRatePerDay: savedArrivalRate, wipAssistanceEffectiveness: savedWipAssistanceEffectiveness }),
-    [savedArrivalRate, savedWipAssistanceEffectiveness],
+    () => withSimulationSettings(scenarios.baseline, { arrivalRatePerDay: savedArrivalRate, wipAssistanceEffectiveness: savedWipAssistanceEffectiveness, operatingAssumptions: savedOperatingAssumptions }),
+    [savedArrivalRate, savedWipAssistanceEffectiveness, savedOperatingAssumptions],
   );
   const baseline = useMemo(
     () => meanSeedCount === 1 ? runScenario(baselineConfig, seed) : runMeanScenario(baselineConfig, meanSeedCount, seed),
@@ -94,6 +97,8 @@ export default function App() {
       setWorkflow(nextWorkflow.map((stage) => stage.trim()));
       setSavedRates({});
       setRateDraft({});
+      setSavedOperatingAssumptions({});
+      setOperatingDraft({});
       setSavedIncident(undefined);
       setSavedSwarm(undefined);
       setIncidentDraft(undefined);
@@ -113,11 +118,17 @@ export default function App() {
         stage,
         Number(rateDraft[stage] ?? selectedConfig.baseRates[stage] ?? 1),
       ]));
-      withSimulationSettings(workflowConfig, { arrivalRatePerDay: arrivalRate, wipAssistanceEffectiveness, baseRates: rates, incident: savedIncident, swarm: savedSwarm });
+      const operatingAssumptions = Object.fromEntries(activeWorkflowStages.map((stage) => [
+        stage,
+        operatingDraft[stage] ?? selectedConfig.operatingAssumptions?.[stage] ?? { focusWip: 2, maximumConcurrency: 16, taskSwitchingLossRatio: 0.2 },
+      ]));
+      withSimulationSettings(workflowConfig, { arrivalRatePerDay: arrivalRate, wipAssistanceEffectiveness, baseRates: rates, operatingAssumptions, incident: savedIncident, swarm: savedSwarm });
       setSavedArrivalRate(arrivalRate);
       setSavedWipAssistanceEffectiveness(wipAssistanceEffectiveness);
       setSavedRates(rates);
       setRateDraft({});
+      setSavedOperatingAssumptions(operatingAssumptions);
+      setOperatingDraft({});
       setCapacityError(undefined);
       setArrivalRateError(undefined);
     } catch (error) {
@@ -152,6 +163,11 @@ export default function App() {
     } catch (error) {
       setInterventionError(error instanceof Error ? error.message : "Unable to save swarm settings.");
     }
+  };
+
+  const updateOperatingAssumption = (stage: string, field: keyof OperatingAssumptions, value: string) => {
+    const current = operatingDraft[stage] ?? selectedConfig.operatingAssumptions?.[stage] ?? { focusWip: 2, maximumConcurrency: 16, taskSwitchingLossRatio: 0.2 };
+    setOperatingDraft((draft) => ({ ...draft, [stage]: { ...current, [field]: Number(value) } }));
   };
 
   const runSimulation = () => {
@@ -225,8 +241,8 @@ export default function App() {
           </section>
 
           <details className="settings-panel" open>
-            <summary>Capacity allocation</summary>
-            <p>Set incoming demand and the daily processing rate for each active stage.</p>
+            <summary>Capacity & concurrency</summary>
+            <p>Set incoming demand, each stage's processing rate, and its operating concurrency.</p>
             <label className="arrival-rate-field" htmlFor="arrival-rate">
               <span>Average arrivals / day</span>
               <input id="arrival-rate" type="number" min="0" step="0.1" value={arrivalRateInput} onChange={(event) => setArrivalRateInput(event.target.value)} />
@@ -235,20 +251,19 @@ export default function App() {
               <span>WIP assistance effectiveness</span>
               <input id="wip-assistance-effectiveness" type="number" min="0" max="1" step="0.05" value={wipAssistanceInput} onChange={(event) => setWipAssistanceInput(event.target.value)} />
             </label>
-            <div className="rate-list">
-              {activeWorkflowStages.map((stage) => (
-                <label key={stage} htmlFor={`rate-${stage}`}>
-                  <span>{stage}</span>
-                  <input
-                    id={`rate-${stage}`}
-                    type="number"
-                    min="0.01"
-                    step="0.05"
-                    value={rateDraft[stage] ?? String(selectedConfig.baseRates[stage] ?? 1)}
-                    onChange={(event) => setRateDraft((draft) => ({ ...draft, [stage]: event.target.value }))}
-                  />
-                </label>
-              ))}
+            <div className="stage-allocation-list">
+              {activeWorkflowStages.map((stage) => {
+                const assumptions = operatingDraft[stage] ?? selectedConfig.operatingAssumptions?.[stage] ?? { focusWip: 2, maximumConcurrency: 16, taskSwitchingLossRatio: 0.2 };
+                return (
+                  <fieldset key={stage}>
+                    <legend>{stage}</legend>
+                    <label htmlFor={`rate-${stage}`}>Daily processing rate<input id={`rate-${stage}`} type="number" min="0.01" step="0.05" value={rateDraft[stage] ?? String(selectedConfig.baseRates[stage] ?? 1)} onChange={(event) => setRateDraft((draft) => ({ ...draft, [stage]: event.target.value }))} /></label>
+                    <label>Focus WIP<input type="number" min="1" step="1" value={assumptions.focusWip} onChange={(event) => updateOperatingAssumption(stage, "focusWip", event.target.value)} /></label>
+                    <label>Max concurrency<input type="number" min="1" step="1" value={assumptions.maximumConcurrency} onChange={(event) => updateOperatingAssumption(stage, "maximumConcurrency", event.target.value)} /></label>
+                    <label>Task-switch loss ratio<input type="number" min="0" max="1" step="0.05" value={assumptions.taskSwitchingLossRatio} onChange={(event) => updateOperatingAssumption(stage, "taskSwitchingLossRatio", event.target.value)} /></label>
+                  </fieldset>
+                );
+              })}
             </div>
             <button type="button" onClick={saveRates}>Save allocation</button>
             {capacityError && <p className="settings-error" role="alert">{capacityError}</p>}
@@ -335,7 +350,7 @@ export default function App() {
           <details className="log-drawer">
             <summary>Daily movement log</summary>
             {"dailyLog" in selected ? (
-              <DailyLog entries={selected.dailyLog} stages={selected.config.workflow.stages} seed={selected.seed} />
+              <DailyLog entries={selected.dailyLog} snapshots={selected.snapshots} stages={selected.config.workflow.stages} seed={selected.seed} />
             ) : (
               <p className="mean-log-note">Daily movement rows belong to an individual simulation. Select one mean-CFD seed to inspect its log.</p>
             )}

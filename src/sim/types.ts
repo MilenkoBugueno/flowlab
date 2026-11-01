@@ -23,6 +23,12 @@ export interface SwarmPolicy {
   rampUpEffectiveness: number;
 }
 
+export interface OperatingAssumptions {
+  focusWip: number;
+  maximumConcurrency: number;
+  taskSwitchingLossRatio: number;
+}
+
 export interface ScenarioConfig {
   id: ScenarioId;
   label: string;
@@ -35,6 +41,7 @@ export interface ScenarioConfig {
   batchSize: number;
   baseRates: Partial<Record<ActiveStage, number>>;
   serviceEffort: Partial<Record<ActiveStage, { min: number; max: number }>>;
+  operatingAssumptions?: Partial<Record<ActiveStage, OperatingAssumptions>>;
   wipLimits?: Partial<Record<ActiveStage, number>>;
   wipAssistanceEffectiveness?: number;
   incident?: CapacityIncident;
@@ -68,6 +75,7 @@ export interface DailySnapshot {
   completions: number;
   externalBacklog: number;
   capacityAssistance?: CapacityAssistance[];
+  operatingCapacity?: DailyOperatingCapacity[];
 }
 
 export interface CapacityAssistance {
@@ -75,6 +83,14 @@ export interface CapacityAssistance {
   to: ActiveStage;
   capacity: number;
   effectiveness: number;
+}
+
+export interface DailyOperatingCapacity {
+  stage: ActiveStage;
+  concurrentItems: number;
+  baseCapacity: number;
+  effectiveCapacity: number;
+  taskSwitchingLoss: number;
 }
 
 export interface DailyMovement {
@@ -98,6 +114,7 @@ export interface Metrics {
   reviewQueueDays: number;
   totalQueueDays: number;
   meanWip: number;
+  totalTaskSwitchingLoss: number;
   littlesLawEstimate: number | null;
 }
 

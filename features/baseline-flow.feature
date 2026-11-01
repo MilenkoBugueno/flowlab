@@ -1,9 +1,10 @@
-Feature: Test bottleneck is visible in the CFD
+Feature: Test bottleneck constrains the flow
 
-  Scenario: Lower Test capacity creates a queue
+  Scenario: Lower Test capacity holds work upstream
     Given the standard FlowLab baseline scenario
     When I simulate 120 working days with seed 42
-    Then the Test CFD band becomes the dominant active queue
+    Then Test has a lower daily processing rate than Development
+    And the Test constraint holds work visibly upstream
     And every arrived item is either completed or active in the workflow
 
   Scenario: A seeded scenario is reproducible

@@ -17,6 +17,10 @@ const common = {
     Development: { min: 0.75, max: 1.35 },
     Test: { min: 0.65, max: 1.2 },
   },
+  operatingAssumptions: {
+    Development: { focusWip: 2, maximumConcurrency: 16, taskSwitchingLossRatio: 0.2 },
+    Test: { focusWip: 2, maximumConcurrency: 16, taskSwitchingLossRatio: 0.2 },
+  },
 };
 
 const swarm = {

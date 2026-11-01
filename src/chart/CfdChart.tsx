@@ -4,6 +4,7 @@ import type { DailySnapshot, SimulationViewResult, Stage } from "../sim/types";
 import { activeStages } from "../sim/workflow";
 
 const palette = ["#cbd5e1", "#38bdf8", "#fb923c", "#a78bfa", "#f472b6", "#facc15", "#34d399", "#60a5fa"];
+const completedStageColor = "#34d399";
 
 type ChartRow = { day: number } & Record<Stage, number>;
 
@@ -19,7 +20,10 @@ export function CfdChart({ result, selectedDay, onSelectDay }: Props) {
   const meanRunCount = "seeds" in result ? result.seeds.length : 1;
   const workflowStages = config.workflow.stages;
   const stateOrder = [...workflowStages].reverse();
-  const colours = Object.fromEntries(workflowStages.map((stage, index) => [stage, palette[index % palette.length]]));
+  const colours = Object.fromEntries(workflowStages.map((stage, index) => [
+    stage,
+    index === workflowStages.length - 1 ? completedStageColor : palette[index % palette.length],
+  ]));
   const width = 920;
   const height = 390;
   const margin = { top: 40, right: 28, bottom: 52, left: 54 };
@@ -120,6 +124,9 @@ function DayInspector({ snapshot, stages }: { snapshot: DailySnapshot; stages: S
       <div><span>Completed</span><strong>{formatCount(snapshot.completions)}</strong></div>
       {statesToInspect.map((stage) => (
         <div key={stage}><span>{stage}</span><strong>{formatCount(snapshot.states[stage])} {active.has(stage) && <small>({formatCount(snapshot.active[stage] ?? 0)} active)</small>}</strong></div>
+      ))}
+      {snapshot.operatingCapacity?.map((capacity) => (
+        <div key={`${capacity.stage}-capacity`}><span>{capacity.stage} capacity</span><strong>{capacity.effectiveCapacity.toFixed(2)} <small>({capacity.taskSwitchingLoss.toFixed(2)} lost)</small></strong></div>
       ))}
     </div>
   );
