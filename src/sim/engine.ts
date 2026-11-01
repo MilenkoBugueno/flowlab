@@ -4,6 +4,7 @@ import type {
   DailyLogEntry,
   DailyMovement,
   DailySnapshot,
+  Feature,
   FlowEvent,
   ItemStatus,
   Metrics,
@@ -14,7 +15,7 @@ import type {
   WorkItem,
   WorkItemType,
 } from "./types";
-import { activeStages } from "./workflow";
+import { activeStages, handoffStages, nextActiveStage } from "./workflow";
 
 const emptyStages = (stages: Stage[]): Record<Stage, number> => Object.fromEntries(stages.map((stage) => [stage, 0]));
 const emptyActive = (stages: ActiveStage[]): Record<ActiveStage, number> => Object.fromEntries(stages.map((stage) => [stage, 0]));
@@ -56,10 +57,6 @@ export function processingRateFor(stage: ActiveStage, day: number, config: Scena
   return rate;
 }
 
-function stageCount(items: WorkItem[], stage: Stage): number {
-  return items.filter((item) => item.stage === stage).length;
-}
-
 function concurrentItemCount(items: WorkItem[], stage: ActiveStage): number {
   return items.filter((item) => item.stage === stage && item.status === "active").length;
 }
@@ -72,10 +69,9 @@ export function effectiveCapacityFor(baseCapacity: number, concurrentItems: numb
   return { effectiveCapacity: baseCapacity - taskSwitchingLoss, taskSwitchingLoss };
 }
 
-function canEnter(items: WorkItem[], target: ActiveStage, config: ScenarioConfig): boolean {
-  const wipLimit = config.wipLimits?.[target];
-  const withinWipLimit = wipLimit === undefined || stageCount(items, target) < wipLimit;
-  return withinWipLimit;
+export function feedbackBugEffortFor(baseBugEffort: number, feedbackDelayEffortFactor: number, developedAt: number, testedAt: number): { effort: number; delayDays: number } {
+  const delayDays = Math.max(0, testedAt - developedAt);
+  return { effort: baseBugEffort + feedbackDelayEffortFactor * delayDays, delayDays };
 }
 
 export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult {
@@ -84,14 +80,20 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
   const exitStage = stages.at(-1);
   if (!entryStage || !exitStage) throw new Error("A workflow needs an entry and an exit state.");
   const active = activeStages(config.workflow);
+  const handoffs = new Set(handoffStages(config.workflow));
+  const developmentStage = active[0];
+  const testStage = active.at(-1);
   const demandRandom = createSeededRandom(seed);
   const effortRandom = createSeededRandom(deriveSeed(seed, 0x9e3779b9));
-  const itemTypeRandom = createSeededRandom(deriveSeed(seed, 0x85ebca6b));
+  const featureRandom = createSeededRandom(deriveSeed(seed, 0xc2b2ae35));
   const items: WorkItem[] = [];
+  const features: Feature[] = [];
   const events: FlowEvent[] = [];
   const snapshots: DailySnapshot[] = [];
   const dailyLog: DailyLogEntry[] = [];
   let itemNumber = 0;
+  let featureNumber = 0;
+  let feedbackArrivals = 0;
 
   const record = (day: number, type: FlowEvent["type"], item: WorkItem, stage: Stage) => {
     events.push({ day, type, itemId: item.id, stage });
@@ -103,19 +105,32 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
     movement.count += 1;
   };
 
-  const createItem = (day: number, type: WorkItemType, initial: boolean, initialStage = entryStage): WorkItem => {
+  const createItem = (
+    day: number,
+    type: WorkItemType,
+    initial: boolean,
+    initialStage = entryStage,
+    options: {
+      title?: string;
+      plannedEffortOverrides?: Partial<Record<ActiveStage, number>>;
+      featureId?: string;
+      featureTitle?: string;
+      originatingPbiId?: string;
+      feedbackDelayDays?: number;
+    } = {},
+  ): WorkItem => {
     const ordinal = ++itemNumber;
-    const firstPlannedStage = initialStage === entryStage ? 0 : active.indexOf(initialStage);
-    const plannedStages = active.slice(Math.max(0, firstPlannedStage));
+    const initialStageIndex = stages.indexOf(initialStage);
+    const plannedStages = active.filter((stage) => stages.indexOf(stage) >= initialStageIndex);
     const plannedEffort = Object.fromEntries(plannedStages.map((stage) => {
       const range = config.serviceEffort[stage] ?? { min: 0.75, max: 1.25 };
-      return [stage, between(range.min, range.max, effortRandom)];
+      return [stage, options.plannedEffortOverrides?.[stage] ?? between(range.min, range.max, effortRandom)];
     }));
     const totalEffort = Object.values(plannedEffort).reduce((total, effort) => total + effort, 0);
     const typeLabel = type === "PBI" ? "Product backlog item" : "Bug";
     return {
       id: `${type}-${String(ordinal).padStart(3, "0")}`,
-      title: `${typeLabel} ${ordinal}`,
+      title: options.title ?? `${typeLabel} ${ordinal}`,
       type,
       initial,
       arrivedAt: day,
@@ -129,6 +144,10 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
       effortRemaining: active.includes(initialStage) ? (plannedEffort[initialStage] ?? 0) : 0,
       enteredAt: { [initialStage]: day },
       startedAt: {},
+      featureId: options.featureId,
+      featureTitle: options.featureTitle,
+      originatingPbiId: options.originatingPbiId,
+      feedbackDelayDays: options.feedbackDelayDays,
       history: [{
         day,
         stage: initialStage,
@@ -142,13 +161,14 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
     item.effortRemaining = item.plannedEffort[stage] ?? 0;
   };
 
-  const enter = (day: number, item: WorkItem, stage: ActiveStage) => {
+  const enter = (day: number, item: WorkItem, stage: Stage) => {
     const from = item.stage;
     item.stage = stage;
     item.status = "waiting";
     item.active = false;
     item.enteredAt[stage] = day;
-    setEffort(item, stage);
+    if (active.includes(stage)) setEffort(item, stage);
+    else item.effortRemaining = 0;
     record(day, "entered-stage", item, stage);
     recordMovement(day, from, stage);
   };
@@ -163,23 +183,85 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
     recordMovement(day, from, exitStage);
   };
 
+  const featureBacklog = config.featureBacklog ?? { featureCount: 0, minPbisPerFeature: 5, maxPbisPerFeature: 10, baseBugEffort: 1, feedbackDelayEffortFactor: 0.1 };
+  const featureFor = (item: WorkItem): Feature | undefined => features.find((feature) => feature.id === item.featureId);
+  const featureTestGateOpen = (item: WorkItem): boolean => {
+    const feature = featureFor(item);
+    return !feature || feature.pbiIds.every((pbiId) => items.find((candidate) => candidate.id === pbiId)?.developedAt !== undefined);
+  };
+
+  const canEnter = (target: Stage): boolean => {
+    const wipLimit = config.wipLimits?.[target];
+    if (wipLimit === undefined) return true;
+    const countedItems = items.filter((item) => {
+      const isDependencyGatedDevelopment = target === developmentStage
+        && item.stage === developmentStage
+        && item.status === "blocked"
+        && item.type === "PBI"
+        && item.featureId !== undefined
+        && !featureTestGateOpen(item);
+      return item.stage === target && !isDependencyGatedDevelopment;
+    });
+    return countedItems.length < wipLimit;
+  };
+
+  const createFeedbackBug = (day: number, pbi: WorkItem) => {
+    if (pbi.feedbackBugId) return;
+    const { delayDays: delay, effort: fixEffort } = feedbackBugEffortFor(featureBacklog.baseBugEffort, featureBacklog.feedbackDelayEffortFactor, pbi.developedAt ?? day, day);
+    const plannedEffortOverrides = developmentStage ? { [developmentStage]: fixEffort } : {};
+    const bug = createItem(day, "Bug", false, entryStage, {
+      title: `Fix ${pbi.id}`,
+      plannedEffortOverrides,
+      featureId: pbi.featureId,
+      featureTitle: pbi.featureTitle,
+      originatingPbiId: pbi.id,
+      feedbackDelayDays: delay,
+    });
+    items.push(bug);
+    pbi.testedAt = day;
+    pbi.feedbackBugId = bug.id;
+    featureFor(pbi)?.bugIds.push(bug.id);
+    feedbackArrivals += 1;
+    record(day, "arrival", bug, entryStage);
+    recordMovement(day, "External", entryStage);
+  };
+
   const moveBlocked = (day: number, from: ActiveStage) => {
     const target = nextStage(from, stages);
     const candidates = items
       .filter((item) => item.stage === from && item.status === "blocked")
       .sort((a, b) => (a.enteredAt[from] ?? 0) - (b.enteredAt[from] ?? 0));
     for (const item of candidates) {
+      if (target === testStage && item.type === "PBI" && !featureTestGateOpen(item)) continue;
       if (target === exitStage) complete(day, item, from);
-      else if (canEnter(items, target, config)) enter(day, item, target);
+      else if (canEnter(target)) enter(day, item, target);
     }
   };
 
-  const pullEntryWork = (day: number) => {
+  const pullHandoffWork = (day: number, from: Stage) => {
+    const target = nextStage(from, stages);
+    const candidates = items
+      .filter((item) => item.stage === from && item.status === "waiting")
+      .sort((a, b) => (a.enteredAt[from] ?? 0) - (b.enteredAt[from] ?? 0));
+    for (const item of candidates) {
+      if (target === testStage && item.type === "PBI" && !featureTestGateOpen(item)) continue;
+      if (target === exitStage) complete(day, item, from);
+      else if (canEnter(target)) enter(day, item, target);
+    }
+  };
+
+  const admitBacklogWork = (day: number, pushAllowance: number) => {
     const entryItems = items.filter((item) => item.stage === entryStage).sort((a, b) => a.arrivedAt - b.arrivedAt);
     const firstActive = active[0];
+    const pullBased = firstActive !== undefined && config.wipLimits?.[firstActive] !== undefined;
+    let remainingAdmissions = pullBased ? Number.POSITIVE_INFINITY : pushAllowance;
     for (const item of entryItems) {
+      if (remainingAdmissions <= 0) break;
       if (!firstActive) complete(day, item, entryStage);
-      else if (canEnter(items, firstActive, config)) enter(day, item, firstActive);
+      else if (canEnter(firstActive)) {
+        enter(day, item, firstActive);
+        remainingAdmissions -= 1;
+      }
       else break;
     }
   };
@@ -218,6 +300,8 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
           item.effortRemaining = 0;
           item.status = "blocked";
           item.active = false;
+          if (stage === developmentStage && item.type === "PBI") item.developedAt ??= day;
+          if (stage === testStage && item.type === "PBI" && item.featureId) createFeedbackBug(day, item);
           record(day, "blocked", item, stage);
         }
       }
@@ -247,6 +331,28 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
     ) item.history.push(state);
   };
 
+  const updateFeatureCompletion = () => {
+    for (const feature of features) {
+      if (feature.completedAt !== undefined) continue;
+      const linkedItems = [...feature.pbiIds, ...feature.bugIds].map((id) => items.find((item) => item.id === id));
+      if (feature.pbiIds.length && feature.pbiIds.every((id) => items.find((item) => item.id === id)?.feedbackBugId) && linkedItems.every((item) => item?.completedAt !== undefined)) {
+        feature.completedAt = Math.max(...linkedItems.map((item) => item?.completedAt ?? 0));
+      }
+    }
+  };
+
+  for (let index = 0; index < featureBacklog.featureCount; index += 1) {
+    const ordinal = ++featureNumber;
+    const feature: Feature = { id: `FEATURE-${String(ordinal).padStart(3, "0")}`, title: `Feature ${String(ordinal).padStart(3, "0")}`, pbiIds: [], bugIds: [] };
+    features.push(feature);
+    const pbiCount = featureBacklog.minPbisPerFeature + Math.floor(featureRandom.next() * (featureBacklog.maxPbisPerFeature - featureBacklog.minPbisPerFeature + 1));
+    for (let pbiIndex = 0; pbiIndex < pbiCount; pbiIndex += 1) {
+      const pbi = createItem(0, "PBI", true, entryStage, { title: `${feature.title} · PBI ${pbiIndex + 1}`, featureId: feature.id, featureTitle: feature.title });
+      items.push(pbi);
+      feature.pbiIds.push(pbi.id);
+    }
+  }
+
   const initialInventory = config.initialInventory ?? { [entryStage]: config.initialBacklog ?? { pbiCount: 0, bugCount: 0 } };
   for (const stage of stages.slice(0, -1)) {
     const inventory = initialInventory[stage] ?? { pbiCount: 0, bugCount: 0 };
@@ -256,18 +362,16 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
 
   for (let day = 0; day < config.horizonDays; day += 1) {
     dailyLog.push({ day, seed, movements: emptyMovements(stages) });
-    const arrivals = poisson(config.arrivalRatePerDay, demandRandom) + (config.batchDays.includes(day) ? config.batchSize : 0);
-    for (let arrival = 0; arrival < arrivals; arrival += 1) {
-      const item = createItem(day, itemTypeRandom.next() < (config.arrivalPbiRatio ?? 0.8) ? "PBI" : "Bug", false);
-      items.push(item);
-      record(day, "arrival", item, entryStage);
-      recordMovement(day, "External", entryStage);
-    }
+    feedbackArrivals = 0;
+    const pushAllowance = poisson(config.arrivalRatePerDay, demandRandom) + (config.batchDays.includes(day) ? config.batchSize : 0);
 
     // Stable daily event order: completed work moves, policies are implicit in rates,
     // admissions/pulls happen, then available stages begin work.
-    [...active].reverse().forEach((stage) => moveBlocked(day, stage));
-    pullEntryWork(day);
+    [...stages.slice(1, -1)].reverse().forEach((stage) => {
+      if (handoffs.has(stage)) pullHandoffWork(day, stage);
+      else if (active.includes(stage)) moveBlocked(day, stage);
+    });
+    admitBacklogWork(day, pushAllowance);
     active.forEach((stage) => {
       const maximumConcurrency = config.operatingAssumptions?.[stage]?.maximumConcurrency ?? 16;
       activateWork(day, stage, maximumConcurrency);
@@ -286,8 +390,8 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
     const effectiveness = config.wipAssistanceEffectiveness ?? 0.75;
     for (const sourceStage of active) {
       if (config.wipLimits?.[sourceStage] === undefined || unusedCapacity[sourceStage] <= 0) continue;
-      const targetStage = nextStage(sourceStage, stages);
-      if (!active.includes(targetStage)) continue;
+      const targetStage = nextActiveStage(sourceStage, config.workflow);
+      if (!targetStage) continue;
       const offeredCapacity = unusedCapacity[sourceStage] * effectiveness;
       const unusedAssistance = processWork(day, targetStage, offeredCapacity);
       const appliedCapacity = offeredCapacity - unusedAssistance;
@@ -304,13 +408,14 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
       if (item.status === "active" && active.includes(item.stage)) activeCounts[item.stage] += 1;
       if (item.status !== "active" && item.stage !== exitStage) waiting[item.stage] += 1;
     }
+    updateFeatureCompletion();
     items.forEach((item) => recordItemState(day, item));
     snapshots.push({
       day,
       states,
       active: activeCounts,
       waiting,
-      arrivals,
+      arrivals: feedbackArrivals,
       completions: items.filter((item) => item.completedAt === day).length,
       externalBacklog: 0,
       capacityAssistance,
@@ -318,10 +423,10 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
     });
   }
 
-  return { config, seed, items, events, snapshots, dailyLog, metrics: calculateMetrics(items, snapshots, config) };
+  return { config, seed, items, features, events, snapshots, dailyLog, metrics: calculateMetrics(items, snapshots, config, features) };
 }
 
-export function calculateMetrics(items: WorkItem[], snapshots: DailySnapshot[], config: ScenarioConfig): Metrics {
+export function calculateMetrics(items: WorkItem[], snapshots: DailySnapshot[], config: ScenarioConfig, features: Feature[] = []): Metrics {
   const stages = config.workflow.stages;
   const exitStage = stages.at(-1) ?? "Done";
   const active = activeStages(config.workflow);
@@ -346,6 +451,7 @@ export function calculateMetrics(items: WorkItem[], snapshots: DailySnapshot[], 
   const meanCycle = cycleTimes.length ? cycleTimes.reduce((total, value) => total + value, 0) / cycleTimes.length : null;
   return {
     completedItems: completed.length,
+    completedFeatures: features.filter((feature) => feature.completedAt !== undefined && feature.completedAt >= config.warmupDays).length,
     throughputPerWeek,
     medianCycleTime: percentile(cycleTimes, 0.5),
     p85CycleTime: percentile(cycleTimes, 0.85),

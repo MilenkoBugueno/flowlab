@@ -16,7 +16,7 @@ Feature: WIP-limited pull with downstream assistance
     Given a workflow with Development and Test WIP limits
     And Test has reached its WIP limit
     When Development completes an item that is ready for Test
-    Then the item remains in Development until Test has a free slot
+    Then the item waits in Integration until Test has a free slot
     And no item enters Test above its WIP limit
 
   Scenario: Use unused WIP-limited stage capacity to help the next stage

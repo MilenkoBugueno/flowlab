@@ -4,18 +4,18 @@ Feature: Custom simulation capacity and intervention settings
   are modeling. Daily processing rates belong to active workflow stages, while
   incidents and swarms are explicit, editable interventions.
 
-  Scenario: Configure the average arrival rate
-    Given I am editing the arrival rate
-    When I save an average arrival rate of 1.6 items per day
+  Scenario: Configure the average backlog push rate
+    Given I am editing the backlog push rate
+    When I save an average backlog push rate of 1.6 items per day
     And I run the simulation with seed 42
-    Then the simulation uses an average arrival rate of 1.6 items per day
-    And the same seed and arrival rate produce identical daily snapshots
+    Then the simulation uses an average backlog push rate of 1.6 items per day
+    And the same seed and backlog push rate produce identical daily snapshots
 
-  Scenario: Reject an invalid arrival rate
-    Given I am editing the arrival rate
-    When I save an average arrival rate of -0.1 items per day
-    Then I am told that the arrival rate must be zero or greater
-    And the current arrival rate remains unchanged
+  Scenario: Reject an invalid backlog push rate
+    Given I am editing the backlog push rate
+    When I save an average backlog push rate of -0.1 items per day
+    Then I am told that the backlog push rate must be zero or greater
+    And the current backlog push rate remains unchanged
 
   Scenario: Edit the daily processing rate for every active stage
     Given a workflow with the states "Ready", "Discovery", "Development", "Review", "Test", and "Done"

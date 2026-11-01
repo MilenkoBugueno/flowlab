@@ -54,7 +54,7 @@ Feature: Initial backlog and simulated Kanban board
     When I set the initial backlog to 8 PBIs and 3 bugs
     Then the next simulation is seeded before day 0 with 11 items in Backlog
     And the initial backlog contains 8 PBIs and 3 bugs
-    And the configured daily arrivals continue independently of the initial backlog
+    And the configured daily push rate is retained
 
   Scenario: Initial backlog items have stable identifying information
     Given a simulation with an initial backlog of 2 PBIs and 1 bug
@@ -64,15 +64,11 @@ Feature: Initial backlog and simulated Kanban board
     And every initial backlog item identifies whether it is a PBI or a bug
     And the same seed produces the same initial item IDs, titles, and types
 
-  Scenario: New arrivals become traceable Kanban items
+  Scenario: Initial backlog stays finite until it is admitted
     Given a simulation with an initial backlog of 2 PBIs and 1 bug
-    And the arriving PBI share is 0.5
-    When new work arrives during the simulation
-    Then each arriving item has a unique ID and non-empty title
-    And each arriving item identifies whether it is a PBI or a bug
-    And each arriving item starts in the entry workflow stage with inactive status, 0 percent progress, and empty start and completion dates
-    And no arriving item reuses an ID from the initial backlog or a prior arrival
-    And the same seed produces the same arriving item IDs, titles, types, and arrival days
+    When I simulate with seed 42
+    Then the daily push rate creates no external work items
+    And all 3 initial items remain in Backlog when the push rate is zero
 
   Scenario: The Kanban board shows the state of every item on a selected day
     Given a simulation with an initial backlog of 4 PBIs and 2 bugs

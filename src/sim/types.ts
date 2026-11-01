@@ -6,6 +6,8 @@ export type ScenarioId = "baseline" | "swarm" | "wip" | "combined";
 
 export interface WorkflowConfig {
   stages: Stage[];
+  /** Passive handoff buffers: visible in the flow, but do not receive processing capacity. */
+  handoffStages?: Stage[];
 }
 
 export interface CapacityIncident {
@@ -37,6 +39,22 @@ export interface InitialBacklog {
 
 export type InitialInventory = Partial<Record<Stage, InitialBacklog>>;
 
+export interface FeatureBacklogConfig {
+  featureCount: number;
+  minPbisPerFeature: number;
+  maxPbisPerFeature: number;
+  baseBugEffort: number;
+  feedbackDelayEffortFactor: number;
+}
+
+export interface Feature {
+  id: string;
+  title: string;
+  pbiIds: string[];
+  bugIds: string[];
+  completedAt?: number;
+}
+
 export interface ScenarioConfig {
   id: ScenarioId;
   label: string;
@@ -45,15 +63,15 @@ export interface ScenarioConfig {
   horizonDays: number;
   warmupDays: number;
   arrivalRatePerDay: number;
-  arrivalPbiRatio?: number;
   initialBacklog?: InitialBacklog;
   initialInventory?: InitialInventory;
+  featureBacklog?: FeatureBacklogConfig;
   batchDays: number[];
   batchSize: number;
   baseRates: Partial<Record<ActiveStage, number>>;
   serviceEffort: Partial<Record<ActiveStage, { min: number; max: number }>>;
   operatingAssumptions?: Partial<Record<ActiveStage, OperatingAssumptions>>;
-  wipLimits?: Partial<Record<ActiveStage, number>>;
+  wipLimits?: Partial<Record<Stage, number>>;
   wipAssistanceEffectiveness?: number;
   incident?: CapacityIncident;
   swarm?: SwarmPolicy;
@@ -77,6 +95,13 @@ export interface WorkItem {
   startedAt: Partial<Record<ActiveStage, number>>;
   firstStartedAt?: number;
   completedAt?: number;
+  featureId?: string;
+  featureTitle?: string;
+  originatingPbiId?: string;
+  developedAt?: number;
+  testedAt?: number;
+  feedbackDelayDays?: number;
+  feedbackBugId?: string;
   history: ItemTimelineState[];
 }
 
@@ -137,6 +162,7 @@ export interface DailyLogEntry {
 
 export interface Metrics {
   completedItems: number;
+  completedFeatures: number;
   throughputPerWeek: number;
   medianCycleTime: number | null;
   p85CycleTime: number | null;
@@ -152,6 +178,7 @@ export interface SimulationResult {
   config: ScenarioConfig;
   seed: number;
   items: WorkItem[];
+  features: Feature[];
   events: FlowEvent[];
   snapshots: DailySnapshot[];
   dailyLog: DailyLogEntry[];

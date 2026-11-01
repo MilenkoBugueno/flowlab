@@ -6,16 +6,25 @@ import { runScenario } from "./sim/engine";
 import { runMeanScenario, validateMeanSeedCount } from "./sim/mean";
 import { scenarioList, scenarios } from "./sim/scenarios";
 import { withSimulationSettings } from "./sim/settings";
-import type { CapacityIncident, InitialInventory, Metrics, OperatingAssumptions, ScenarioId, SwarmPolicy } from "./sim/types";
+import type { CapacityIncident, FeatureBacklogConfig, InitialInventory, Metrics, OperatingAssumptions, ScenarioId, SwarmPolicy } from "./sim/types";
 import { activeStages, withWorkflow } from "./sim/workflow";
 
 const metricLabels: Array<[keyof Metrics, string, string]> = [
   ["completedItems", "Completed items", "More is better, if cycle time remains healthy."],
+  ["completedFeatures", "Completed features", "Features whose PBIs and generated feedback Bugs are all Done."],
   ["p85CycleTime", "p85 cycle time", "Days from first active work to completion for 85% of completed work."],
   ["maxReviewWip", "Peak constraint WIP", "The highest number of items in the constrained workflow stage."],
   ["reviewQueueDays", "Constraint queue-days", "Total waiting pressure in the constrained workflow stage."],
   ["totalTaskSwitchingLoss", "Task-switch loss", "Daily capacity lost to work beyond focus WIP."],
 ];
+
+const defaultFeatureBacklog: FeatureBacklogConfig = {
+  featureCount: 20,
+  minPbisPerFeature: 5,
+  maxPbisPerFeature: 10,
+  baseBugEffort: 1,
+  feedbackDelayEffortFactor: 0.1,
+};
 
 function formatMetric(key: keyof Metrics, value: Metrics[keyof Metrics]) {
   if (value === null) return "—";
@@ -32,14 +41,15 @@ export default function App() {
   const [seedInput, setSeedInput] = useState("42");
   const [arrivalRateInput, setArrivalRateInput] = useState(String(scenarios.baseline.arrivalRatePerDay));
   const [savedArrivalRate, setSavedArrivalRate] = useState(scenarios.baseline.arrivalRatePerDay);
-  const [arrivalPbiRatioInput, setArrivalPbiRatioInput] = useState(String(scenarios.baseline.arrivalPbiRatio ?? 0.8));
-  const [savedArrivalPbiRatio, setSavedArrivalPbiRatio] = useState(scenarios.baseline.arrivalPbiRatio ?? 0.8);
   const [wipAssistanceInput, setWipAssistanceInput] = useState(String(scenarios.baseline.wipAssistanceEffectiveness ?? 0.75));
   const [savedWipAssistanceEffectiveness, setSavedWipAssistanceEffectiveness] = useState(scenarios.baseline.wipAssistanceEffectiveness ?? 0.75);
   const [arrivalRateError, setArrivalRateError] = useState<string>();
   const [savedInitialInventory, setSavedInitialInventory] = useState<InitialInventory>({});
   const [initialInventoryDraft, setInitialInventoryDraft] = useState<Partial<Record<string, { pbiCount: string; bugCount: string }>>>({});
   const [initialInventoryError, setInitialInventoryError] = useState<string>();
+  const [savedFeatureBacklog, setSavedFeatureBacklog] = useState<FeatureBacklogConfig>(defaultFeatureBacklog);
+  const [featureBacklogDraft, setFeatureBacklogDraft] = useState<FeatureBacklogConfig>(defaultFeatureBacklog);
+  const [featureBacklogError, setFeatureBacklogError] = useState<string>();
   const [meanSeedCountInput, setMeanSeedCountInput] = useState("1");
   const [meanSeedCount, setMeanSeedCount] = useState(1);
   const [meanSeedError, setMeanSeedError] = useState<string>();
@@ -60,12 +70,12 @@ export default function App() {
   const seed = Number.isFinite(Number(seedInput)) ? Math.max(0, Math.floor(Number(seedInput))) : 42;
   const workflowConfig = useMemo(() => withWorkflow(scenarios[scenarioId], workflow), [scenarioId, workflow]);
   const selectedConfig = useMemo(
-    () => withSimulationSettings(workflowConfig, { arrivalRatePerDay: savedArrivalRate, arrivalPbiRatio: savedArrivalPbiRatio, initialInventory: inventoryForStages(savedInitialInventory, workflowConfig.workflow.stages), wipAssistanceEffectiveness: savedWipAssistanceEffectiveness, baseRates: savedRates, operatingAssumptions: savedOperatingAssumptions, incident: savedIncident, swarm: savedSwarm }),
-    [workflowConfig, savedArrivalRate, savedArrivalPbiRatio, savedInitialInventory, savedWipAssistanceEffectiveness, savedRates, savedOperatingAssumptions, savedIncident, savedSwarm],
+    () => withSimulationSettings(workflowConfig, { arrivalRatePerDay: savedArrivalRate, initialInventory: inventoryForStages(savedInitialInventory, workflowConfig.workflow.stages), featureBacklog: savedFeatureBacklog, wipAssistanceEffectiveness: savedWipAssistanceEffectiveness, baseRates: savedRates, operatingAssumptions: savedOperatingAssumptions, incident: savedIncident, swarm: savedSwarm }),
+    [workflowConfig, savedArrivalRate, savedInitialInventory, savedFeatureBacklog, savedWipAssistanceEffectiveness, savedRates, savedOperatingAssumptions, savedIncident, savedSwarm],
   );
   const baselineConfig = useMemo(
-    () => withSimulationSettings(scenarios.baseline, { arrivalRatePerDay: savedArrivalRate, arrivalPbiRatio: savedArrivalPbiRatio, initialInventory: inventoryForStages(savedInitialInventory, scenarios.baseline.workflow.stages), wipAssistanceEffectiveness: savedWipAssistanceEffectiveness, operatingAssumptions: savedOperatingAssumptions }),
-    [savedArrivalRate, savedArrivalPbiRatio, savedInitialInventory, savedWipAssistanceEffectiveness, savedOperatingAssumptions],
+    () => withSimulationSettings(scenarios.baseline, { arrivalRatePerDay: savedArrivalRate, initialInventory: inventoryForStages(savedInitialInventory, scenarios.baseline.workflow.stages), featureBacklog: savedFeatureBacklog, wipAssistanceEffectiveness: savedWipAssistanceEffectiveness, operatingAssumptions: savedOperatingAssumptions }),
+    [savedArrivalRate, savedInitialInventory, savedFeatureBacklog, savedWipAssistanceEffectiveness, savedOperatingAssumptions],
   );
   const baseline = useMemo(
     () => meanSeedCount === 1 ? runScenario(baselineConfig, seed) : runMeanScenario(baselineConfig, meanSeedCount, seed),
@@ -77,6 +87,7 @@ export default function App() {
   );
   const [selectedDay, setSelectedDay] = useState(50);
   const [visualization, setVisualization] = useState<"cfd" | "kanban">("cfd");
+  const [showInactiveWork, setShowInactiveWork] = useState(true);
   const scenario = scenarios[scenarioId];
   const activeWorkflowStages = activeStages(workflowConfig.workflow);
   const initialInventoryStages = workflowConfig.workflow.stages.slice(0, -1);
@@ -125,7 +136,6 @@ export default function App() {
   const saveRates = () => {
     try {
       const arrivalRate = Number(arrivalRateInput);
-      const arrivalPbiRatio = Number(arrivalPbiRatioInput);
       const wipAssistanceEffectiveness = Number(wipAssistanceInput);
       const rates = Object.fromEntries(activeWorkflowStages.map((stage) => [
         stage,
@@ -135,9 +145,8 @@ export default function App() {
         stage,
         operatingDraft[stage] ?? selectedConfig.operatingAssumptions?.[stage] ?? { focusWip: 5, maximumConcurrency: 16, taskSwitchingLossRatio: 0.2 },
       ]));
-      withSimulationSettings(workflowConfig, { arrivalRatePerDay: arrivalRate, arrivalPbiRatio, wipAssistanceEffectiveness, baseRates: rates, operatingAssumptions, incident: savedIncident, swarm: savedSwarm });
+      withSimulationSettings(workflowConfig, { arrivalRatePerDay: arrivalRate, wipAssistanceEffectiveness, baseRates: rates, operatingAssumptions, incident: savedIncident, swarm: savedSwarm });
       setSavedArrivalRate(arrivalRate);
-      setSavedArrivalPbiRatio(arrivalPbiRatio);
       setSavedWipAssistanceEffectiveness(wipAssistanceEffectiveness);
       setSavedRates(rates);
       setRateDraft({});
@@ -147,7 +156,7 @@ export default function App() {
       setArrivalRateError(undefined);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unable to save capacity allocation.";
-      if (message.includes("arrival rate")) {
+      if (message.includes("backlog push rate")) {
         setArrivalRateError(message);
         setCapacityError(undefined);
       } else {
@@ -176,6 +185,16 @@ export default function App() {
       setInitialInventoryError(undefined);
     } catch (error) {
       setInitialInventoryError(error instanceof Error ? error.message : "Unable to save the initial workflow inventory.");
+    }
+  };
+
+  const saveFeatureBacklog = () => {
+    try {
+      withSimulationSettings(workflowConfig, { featureBacklog: featureBacklogDraft });
+      setSavedFeatureBacklog(featureBacklogDraft);
+      setFeatureBacklogError(undefined);
+    } catch (error) {
+      setFeatureBacklogError(error instanceof Error ? error.message : "Unable to save the feature-backed backlog.");
     }
   };
 
@@ -268,6 +287,7 @@ export default function App() {
             <p className="eyebrow">Customize</p>
             <h2 id="workflow-heading">Workflow</h2>
             <p>States in flow order, separated by commas.</p>
+            <p><strong>Integration</strong> is the default passive handoff buffer: it is visible on the board and CFD, but has no processing capacity of its own.</p>
             <label htmlFor="workflow-states">Workflow states</label>
             <div className="workflow-editor-controls">
               <input id="workflow-states" value={workflowInput} onChange={(event) => setWorkflowInput(event.target.value)} />
@@ -278,14 +298,10 @@ export default function App() {
 
           <details className="settings-panel" open>
             <summary>Capacity & concurrency</summary>
-            <p>Set incoming demand, each stage's processing rate, and its operating concurrency.</p>
+            <p>Set the rate at which Backlog is pushed into Development, each stage's processing rate, and its operating concurrency.</p>
             <label className="arrival-rate-field" htmlFor="arrival-rate">
-              <span>Average arrivals / day</span>
+              <span>Average backlog pushes / day</span>
               <input id="arrival-rate" type="number" min="0" step="0.1" value={arrivalRateInput} onChange={(event) => setArrivalRateInput(event.target.value)} />
-            </label>
-            <label className="arrival-rate-field" htmlFor="arrival-pbi-ratio">
-              <span>PBI share of arrivals</span>
-              <input id="arrival-pbi-ratio" type="number" min="0" max="1" step="0.05" value={arrivalPbiRatioInput} onChange={(event) => setArrivalPbiRatioInput(event.target.value)} />
             </label>
             <label className="arrival-rate-field" htmlFor="wip-assistance-effectiveness">
               <span>WIP assistance effectiveness</span>
@@ -326,6 +342,16 @@ export default function App() {
             </div>
             <button type="button" onClick={saveInitialInventory}>Save initial inventory</button>
             {initialInventoryError && <p className="settings-error" role="alert">{initialInventoryError}</p>}
+            <div className="feature-backlog-settings">
+              <p>Feature-backed backlog</p>
+              <label>Initial features<input type="number" min="0" step="1" value={featureBacklogDraft.featureCount} onChange={(event) => setFeatureBacklogDraft((draft) => ({ ...draft, featureCount: Number(event.target.value) }))} /></label>
+              <label>PBIs / feature (min)<input type="number" min="1" step="1" value={featureBacklogDraft.minPbisPerFeature} onChange={(event) => setFeatureBacklogDraft((draft) => ({ ...draft, minPbisPerFeature: Number(event.target.value) }))} /></label>
+              <label>PBIs / feature (max)<input type="number" min="1" step="1" value={featureBacklogDraft.maxPbisPerFeature} onChange={(event) => setFeatureBacklogDraft((draft) => ({ ...draft, maxPbisPerFeature: Number(event.target.value) }))} /></label>
+              <label>Base Bug effort<input type="number" min="0.01" step="0.1" value={featureBacklogDraft.baseBugEffort} onChange={(event) => setFeatureBacklogDraft((draft) => ({ ...draft, baseBugEffort: Number(event.target.value) }))} /></label>
+              <label>Feedback-delay factor<input type="number" min="0" step="0.05" value={featureBacklogDraft.feedbackDelayEffortFactor} onChange={(event) => setFeatureBacklogDraft((draft) => ({ ...draft, feedbackDelayEffortFactor: Number(event.target.value) }))} /></label>
+              <button type="button" onClick={saveFeatureBacklog}>Save feature backlog</button>
+              {featureBacklogError && <p className="settings-error" role="alert">{featureBacklogError}</p>}
+            </div>
           </details>
 
           <details className="settings-panel">
@@ -372,7 +398,9 @@ export default function App() {
 
           <details className="model-notes">
             <summary>Model notes</summary>
+            <p>Without a Development WIP limit, the daily push rate releases Backlog work into Development. A Development WIP limit changes that admission to pull.</p>
             <p>Swarming reassigns Development capacity. WIP limits keep constrained work visibly upstream.</p>
+            <p>Integration holds finished Development work until Test accepts it; it never receives capacity or concurrency settings.</p>
             <p>Compare cycle time, completions, and queue-days—not just the shape of the CFD.</p>
           </details>
         </aside>
@@ -383,7 +411,7 @@ export default function App() {
             <button type="button" role="tab" aria-selected={visualization === "kanban"} className={visualization === "kanban" ? "active" : ""} onClick={() => setVisualization("kanban")}>Kanban</button>
           </div>
           {visualization === "cfd" ? (
-            <CfdChart result={selected} selectedDay={selectedDay} onSelectDay={setSelectedDay} />
+            <CfdChart result={selected} selectedDay={selectedDay} onSelectDay={setSelectedDay} showInactiveWork={showInactiveWork} onShowInactiveWorkChange={setShowInactiveWork} />
           ) : "dailyLog" in selected ? (
             <KanbanBoard result={selected} selectedDay={selectedDay} onSelectDay={setSelectedDay} />
           ) : (

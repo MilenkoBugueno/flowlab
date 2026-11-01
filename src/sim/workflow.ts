@@ -3,11 +3,26 @@ import type { ActiveStage, InitialInventory, ScenarioConfig, Stage, WorkflowConf
 const defaultEffort = { min: 0.75, max: 1.25 };
 
 export const defaultWorkflow: WorkflowConfig = {
-  stages: ["Backlog", "Development", "Test", "Done"],
+  stages: ["Backlog", "Development", "Integration", "Test", "Done"],
+  handoffStages: ["Integration"],
 };
 
 export function activeStages(workflow: WorkflowConfig): ActiveStage[] {
-  return workflow.stages.slice(1, -1);
+  const handoffs = new Set(workflow.handoffStages ?? []);
+  return workflow.stages.slice(1, -1).filter((stage) => !handoffs.has(stage));
+}
+
+export function handoffStages(workflow: WorkflowConfig): Stage[] {
+  const entryStage = workflow.stages[0];
+  const exitStage = workflow.stages.at(-1);
+  return (workflow.handoffStages ?? []).filter((stage) => (
+    workflow.stages.includes(stage) && stage !== entryStage && stage !== exitStage
+  ));
+}
+
+export function nextActiveStage(stage: Stage, workflow: WorkflowConfig): ActiveStage | undefined {
+  const stageIndex = workflow.stages.indexOf(stage);
+  return activeStages(workflow).find((candidate) => workflow.stages.indexOf(candidate) > stageIndex);
 }
 
 export function validateWorkflow(stages: string[]): Stage[] {
@@ -27,7 +42,9 @@ function stageAtSamePosition(source: Stage[], target: Stage, targetIndex: number
 export function withWorkflow(config: ScenarioConfig, states: string[]): ScenarioConfig {
   const stages = validateWorkflow(states);
   const oldActive = activeStages(config.workflow);
-  const nextActive = stages.slice(1, -1);
+  const nextHandoffs = handoffStages(config.workflow).filter((stage) => stages.includes(stage));
+  const nextWorkflow: WorkflowConfig = { stages, handoffStages: nextHandoffs.length ? nextHandoffs : undefined };
+  const nextActive = activeStages(nextWorkflow);
   const valueFor = <T>(values: Partial<Record<ActiveStage, T>>, stage: Stage, index: number, fallback: T): T => {
     const oldStage = stageAtSamePosition(oldActive, stage, index);
     return oldStage === undefined ? fallback : (values[oldStage] ?? fallback);
@@ -42,11 +59,13 @@ export function withWorkflow(config: ScenarioConfig, states: string[]): Scenario
   const incidentStage = config.incident && (mapExistingStage(config.incident.stage) ?? stages[0]);
   const mappedSource = config.swarm && mapExistingStage(config.swarm.sourceStage);
   const mappedTarget = config.swarm && mapExistingStage(config.swarm.targetStage);
+  const oldWipStages = config.workflow.stages.slice(1, -1);
+  const nextWipStages = stages.slice(1, -1);
   const wipLimits = config.wipLimits
-    ? Object.fromEntries(nextActive.flatMap((stage, index) => {
-      const oldStage = stageAtSamePosition(oldActive, stage, index);
+    ? Object.fromEntries(nextWipStages.map((stage, index) => {
+      const oldStage = stageAtSamePosition(oldWipStages, stage, index);
       const limit = oldStage === undefined ? 5 : (config.wipLimits?.[oldStage] ?? 5);
-      return [[stage, limit]];
+      return [stage, limit];
     }))
     : undefined;
   const initialInventory: InitialInventory | undefined = config.initialInventory
@@ -58,7 +77,7 @@ export function withWorkflow(config: ScenarioConfig, states: string[]): Scenario
 
   return {
     ...config,
-    workflow: { stages },
+    workflow: nextWorkflow,
     baseRates,
     serviceEffort,
     wipLimits,

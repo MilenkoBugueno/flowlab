@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { Given, Then, When, World, setWorldConstructor } from "@cucumber/cucumber";
-import { effectiveCapacityFor, processingRateFor, runScenario } from "../../src/sim/engine";
+import { effectiveCapacityFor, feedbackBugEffortFor, processingRateFor, runScenario } from "../../src/sim/engine";
 import { runMeanScenario, validateMeanSeedCount } from "../../src/sim/mean";
 import { scenarios } from "../../src/sim/scenarios";
 import { validateOperatingAssumptions, withOperatingAssumptions, withProcessingRates, withSimulationSettings } from "../../src/sim/settings";
-import type { CapacityIncident, InitialBacklog, InitialInventory, ItemTimelineState, MeanSimulationResult, OperatingAssumptions, ScenarioConfig, SimulationResult, SwarmPolicy, WorkItem } from "../../src/sim/types";
+import type { CapacityIncident, FeatureBacklogConfig, InitialBacklog, InitialInventory, ItemTimelineState, MeanSimulationResult, OperatingAssumptions, ScenarioConfig, SimulationResult, SwarmPolicy, WorkItem } from "../../src/sim/types";
 import { activeStages, withWorkflow } from "../../src/sim/workflow";
 
 class FlowLabWorld extends World {
@@ -39,6 +39,13 @@ class FlowLabWorld extends World {
   initialBacklogError?: string;
   initialInventoryBeforeEdit?: InitialInventory;
   initialInventoryError?: string;
+  featureBacklogBeforeEdit?: FeatureBacklogConfig;
+  featureBacklogError?: string;
+  feedbackBaseBugEffort?: number;
+  feedbackDelayFactor?: number;
+  feedbackDevelopedDay?: number;
+  feedbackTestedDay?: number;
+  feedbackResult?: { effort: number; delayDays: number };
   inspectedItemId?: string;
 }
 
@@ -65,6 +72,10 @@ function meanResultFor(world: FlowLabWorld): MeanSimulationResult {
   return world.meanResult;
 }
 
+function withSeededBacklog(config: ScenarioConfig, pbiCount = 200): ScenarioConfig {
+  return { ...config, initialInventory: undefined, initialBacklog: { pbiCount, bugCount: 0 } };
+}
+
 function wipPullConfig(): ScenarioConfig {
   return {
     ...scenarios.wip,
@@ -73,6 +84,7 @@ function wipPullConfig(): ScenarioConfig {
     arrivalRatePerDay: 0,
     batchDays: [0],
     batchSize: 3,
+    initialBacklog: { pbiCount: 3, bugCount: 0 },
     baseRates: { Development: 1, Test: 0.1 },
     serviceEffort: { Development: { min: 1, max: 1 }, Test: { min: 5, max: 5 } },
     wipLimits: { Development: 2, Test: 3 },
@@ -87,6 +99,7 @@ function downstreamWipConfig(): ScenarioConfig {
     arrivalRatePerDay: 0,
     batchDays: [0],
     batchSize: 3,
+    initialBacklog: { pbiCount: 3, bugCount: 0 },
     baseRates: { Development: 3, Test: 0.1 },
     serviceEffort: { Development: { min: 1, max: 1 }, Test: { min: 5, max: 5 } },
     wipLimits: { Development: 3, Test: 1 },
@@ -96,11 +109,12 @@ function downstreamWipConfig(): ScenarioConfig {
 function assistanceConfig(effectiveness = 0.75): ScenarioConfig {
   return {
     ...scenarios.wip,
-    horizonDays: 2,
+    horizonDays: 3,
     warmupDays: 0,
     arrivalRatePerDay: 0,
     batchDays: [0],
     batchSize: 1,
+    initialBacklog: { pbiCount: 1, bugCount: 0 },
     baseRates: { Development: 0.4, Test: 0.1 },
     serviceEffort: { Development: { min: 0.4, max: 0.4 }, Test: { min: 3, max: 3 } },
     wipLimits: { Development: 1, Test: 1 },
@@ -116,6 +130,7 @@ function fullyUtilizedWipConfig(): ScenarioConfig {
     arrivalRatePerDay: 0,
     batchDays: [0],
     batchSize: 4,
+    initialBacklog: { pbiCount: 4, bugCount: 0 },
     baseRates: { Development: 1.4, Test: 0.1 },
     serviceEffort: { Development: { min: 1, max: 1 }, Test: { min: 5, max: 5 } },
     wipLimits: { Development: 4, Test: 4 },
@@ -160,22 +175,48 @@ function stagedInventoryConfig(inventory: InitialInventory, overrides: Partial<S
   };
 }
 
+function featureFlowConfig(overrides: Partial<ScenarioConfig> = {}): ScenarioConfig {
+  return {
+    ...scenarios.baseline,
+    horizonDays: 15,
+    warmupDays: 0,
+    arrivalRatePerDay: 100,
+    batchDays: [0],
+    batchSize: 3,
+    initialInventory: {},
+    featureBacklog: { featureCount: 1, minPbisPerFeature: 3, maxPbisPerFeature: 3, baseBugEffort: 1, feedbackDelayEffortFactor: 0.1 },
+    baseRates: { Development: 2, Test: 3 },
+    serviceEffort: { Development: { min: 1, max: 1 }, Test: { min: 1, max: 1 } },
+    operatingAssumptions: {
+      Development: { focusWip: 2, maximumConcurrency: 2, taskSwitchingLossRatio: 0 },
+      Test: { focusWip: 3, maximumConcurrency: 3, taskSwitchingLossRatio: 0 },
+    },
+    ...overrides,
+  };
+}
+
+function updateFeatureBacklog(config: ScenarioConfig, updates: Partial<FeatureBacklogConfig>): ScenarioConfig {
+  return withSimulationSettings(config, {
+    featureBacklog: { ...(config.featureBacklog ?? { featureCount: 0, minPbisPerFeature: 5, maxPbisPerFeature: 10, baseBugEffort: 1, feedbackDelayEffortFactor: 0.1 }), ...updates },
+  });
+}
+
 Given("the standard FlowLab baseline scenario", function (this: FlowLabWorld) {
-  this.config = scenarios.baseline;
+  this.config = withSeededBacklog(scenarios.baseline);
 });
 
 Given("the baseline scenario with a scheduled Test swarm", function (this: FlowLabWorld) {
-  this.config = scenarios.swarm;
+  this.config = withSeededBacklog(scenarios.swarm);
 });
 
-Given("the baseline scenario with Development and Test WIP limits", function (this: FlowLabWorld) {
-  this.config = scenarios.wip;
+Given("the baseline scenario with Development, Integration, and Test WIP limits", function (this: FlowLabWorld) {
+  this.config = withSeededBacklog(scenarios.wip);
 });
 
 When("I simulate 120 working days with seed {int}", function (this: FlowLabWorld, seed: number) {
   assert.ok(this.config, "Choose a scenario before simulating");
   this.result = runScenario(this.config, seed);
-  this.baseline = runScenario(scenarios.baseline, seed);
+  this.baseline = runScenario({ ...scenarios.baseline, initialBacklog: this.config.initialBacklog }, seed);
 });
 
 When("I simulate the scenario twice with seed {int}", function (this: FlowLabWorld, seed: number) {
@@ -196,11 +237,11 @@ Then("the Test constraint holds work visibly upstream", function (this: FlowLabW
 
 Then("every arrived item is either completed or active in the workflow", function (this: FlowLabWorld) {
   const result = resultFor(this);
-  let arrivals = 0;
+  let representedItems = result.items.filter((item) => item.initial).length;
   for (const snapshot of result.snapshots) {
-    arrivals += snapshot.arrivals;
+    representedItems += snapshot.arrivals;
     const accountedFor = Object.values(snapshot.states).reduce((total, count) => total + count, 0) + snapshot.externalBacklog;
-    assert.equal(accountedFor, arrivals, `Conservation failed on day ${snapshot.day}`);
+    assert.equal(accountedFor, representedItems, `Conservation failed on day ${snapshot.day}`);
   }
 });
 
@@ -229,6 +270,11 @@ Then("Test WIP never exceeds {int} items", function (this: FlowLabWorld, limit: 
   assert.ok(result.snapshots.every((snapshot) => snapshot.states.Test <= limit));
 });
 
+Then("Integration WIP never exceeds {int} items", function (this: FlowLabWorld, limit: number) {
+  const result = resultFor(this);
+  assert.ok(result.snapshots.every((snapshot) => snapshot.states.Integration <= limit));
+});
+
 Then("constrained work remains visible upstream", function (this: FlowLabWorld) {
   const result = resultFor(this);
   assert.ok(result.snapshots.some((snapshot) => snapshot.states.Backlog > 0 || snapshot.states.Development >= 6));
@@ -254,18 +300,16 @@ Then("each daily entry lists the number of items moved between each pair of stat
   }
 });
 
-Then("movements into the workflow are recorded as External to Backlog", function (this: FlowLabWorld) {
+Then("the initial backlog is not recorded as an External arrival", function (this: FlowLabWorld) {
   const result = resultFor(this);
-  assert.equal(
-    movementCount(result, "External", "Backlog"),
-    result.items.length,
-  );
+  assert.equal(movementCount(result, "External", "Backlog"), 0);
 });
 
-Then("movements through the workflow are recorded as Backlog to Development and Development to Test", function (this: FlowLabWorld) {
+Then("movements through the workflow are recorded as Backlog to Development, Development to Integration, and Integration to Test", function (this: FlowLabWorld) {
   const result = resultFor(this);
   assert.ok(movementCount(result, "Backlog", "Development") > 0);
-  assert.ok(movementCount(result, "Development", "Test") > 0);
+  assert.ok(movementCount(result, "Development", "Integration") > 0);
+  assert.ok(movementCount(result, "Integration", "Test") > 0);
 });
 
 Then("completed work is recorded as Test to Done", function (this: FlowLabWorld) {
@@ -281,13 +325,6 @@ Then("movements that do not occur on a day are shown with zero counts", function
   assert.equal(zeroCountMovement.count, 0);
 });
 
-Then("the sum of all daily External to Backlog movements equals the number of arrived items", function (this: FlowLabWorld) {
-  const result = resultFor(this);
-  const arrivals = result.snapshots.reduce((total, snapshot) => total + snapshot.arrivals, 0);
-  const loggedArrivals = movementCount(result, "External", "Backlog");
-  assert.equal(loggedArrivals, arrivals);
-});
-
 Then("the sum of all daily Test to Done movements equals the number of completed items", function (this: FlowLabWorld) {
   const result = resultFor(this);
   const completions = result.snapshots.reduce((total, snapshot) => total + snapshot.completions, 0);
@@ -298,6 +335,9 @@ Then("the sum of all daily Test to Done movements equals the number of completed
 Then("the daily log movements reproduce the change in each state between consecutive daily snapshots", function (this: FlowLabWorld) {
   const result = resultFor(this);
   const prior = Object.fromEntries(result.config.workflow.stages.map((stage) => [stage, 0]));
+  result.items.filter((item) => item.initial).forEach((item) => {
+    prior[item.history[0]?.stage ?? result.config.workflow.stages[0]] += 1;
+  });
   for (const [day, snapshot] of result.snapshots.entries()) {
     const movements = result.dailyLog[day].movements;
     const changes = Object.fromEntries(result.config.workflow.stages.map((stage) => [stage, 0]));
@@ -314,7 +354,7 @@ Then("the daily log movements reproduce the change in each state between consecu
 
 Given(/^a workflow with the states (.+)$/, function (this: FlowLabWorld, value: string) {
   const states = [...value.matchAll(/"([^"]+)"/g)].map((match) => match[1]);
-  this.config = withWorkflow(scenarios.baseline, states);
+  this.config = withWorkflow(withSeededBacklog(scenarios.baseline), states);
 });
 
 Then("the CFD displays the configured workflow state names", function (this: FlowLabWorld) {
@@ -532,13 +572,13 @@ Then("the current intervention settings remain unchanged", function (this: FlowL
   assert.equal(this.config, this.interventionsBeforeEdit);
 });
 
-Given("I am editing the arrival rate", function (this: FlowLabWorld) {
+Given("I am editing the backlog push rate", function (this: FlowLabWorld) {
   this.config = scenarios.baseline;
   this.arrivalRateBeforeEdit = this.config.arrivalRatePerDay;
 });
 
-When("I save an average arrival rate of {float} items per day", function (this: FlowLabWorld, arrivalRatePerDay: number) {
-  assert.ok(this.config, "Choose a scenario before editing the arrival rate");
+When("I save an average backlog push rate of {float} items per day", function (this: FlowLabWorld, arrivalRatePerDay: number) {
+  assert.ok(this.config, "Choose a scenario before editing the backlog push rate");
   try {
     this.config = withSimulationSettings(this.config, { arrivalRatePerDay });
   } catch (error) {
@@ -546,20 +586,20 @@ When("I save an average arrival rate of {float} items per day", function (this: 
   }
 });
 
-Then("the simulation uses an average arrival rate of {float} items per day", function (this: FlowLabWorld, arrivalRatePerDay: number) {
+Then("the simulation uses an average backlog push rate of {float} items per day", function (this: FlowLabWorld, arrivalRatePerDay: number) {
   assert.equal(resultFor(this).config.arrivalRatePerDay, arrivalRatePerDay);
 });
 
-Then("the same seed and arrival rate produce identical daily snapshots", function (this: FlowLabWorld) {
+Then("the same seed and backlog push rate produce identical daily snapshots", function (this: FlowLabWorld) {
   const result = resultFor(this);
   assert.deepEqual(result.snapshots, runScenario(result.config, result.seed).snapshots);
 });
 
-Then("I am told that the arrival rate must be zero or greater", function (this: FlowLabWorld) {
-  assert.equal(this.arrivalRateError, "The arrival rate must be zero or greater.");
+Then("I am told that the backlog push rate must be zero or greater", function (this: FlowLabWorld) {
+  assert.equal(this.arrivalRateError, "The backlog push rate must be zero or greater.");
 });
 
-Then("the current arrival rate remains unchanged", function (this: FlowLabWorld) {
+Then("the current backlog push rate remains unchanged", function (this: FlowLabWorld) {
   assert.equal(this.config?.arrivalRatePerDay, this.arrivalRateBeforeEdit);
 });
 
@@ -714,8 +754,8 @@ When("Development completes an item that is ready for Test", function (this: Flo
   this.result = runScenario(this.config, 1);
 });
 
-Then("the item remains in Development until Test has a free slot", function (this: FlowLabWorld) {
-  assert.ok((resultFor(this).snapshots[1].states.Development ?? 0) > 0);
+Then("the item waits in Integration until Test has a free slot", function (this: FlowLabWorld) {
+  assert.ok((resultFor(this).snapshots[1].states.Integration ?? 0) > 0);
 });
 
 Then("no item enters Test above its WIP limit", function (this: FlowLabWorld) {
@@ -808,13 +848,15 @@ Then("the current WIP assistance settings remain unchanged", function (this: Flo
 });
 
 function operationalConcurrencyConfig(maximumConcurrency: number, wipLimit?: number): ScenarioConfig {
+  const itemCount = wipLimit === undefined ? maximumConcurrency + 1 : wipLimit + 1;
   return {
     ...scenarios.baseline,
     horizonDays: 2,
     warmupDays: 0,
     arrivalRatePerDay: 0,
     batchDays: [0],
-    batchSize: wipLimit === undefined ? maximumConcurrency + 1 : wipLimit + 1,
+    batchSize: itemCount,
+    initialBacklog: { pbiCount: itemCount, bugCount: 0 },
     baseRates: { Development: 0.1, Test: 0.1 },
     serviceEffort: { Development: { min: 0.1, max: 0.1 }, Test: { min: 10, max: 10 } },
     operatingAssumptions: {
@@ -868,6 +910,8 @@ Given("Development has a maximum concurrency of {int} items and no explicit Deve
     this.config = {
       ...withOperatingAssumptions(this.config, { Development: { ...current, maximumConcurrency } }),
       wipLimits: undefined,
+      batchDays: [0],
+      batchSize: this.config.initialBacklog?.pbiCount ?? maximumConcurrency + 1,
     };
   } else {
     this.config = operationalConcurrencyConfig(maximumConcurrency);
@@ -965,6 +1009,11 @@ Given("Development has an explicit WIP limit of {int} items", function (this: Fl
   this.config = { ...this.config, wipLimits: { ...(this.config.wipLimits ?? {}), Development: limit } };
 });
 
+Given("Test has an explicit WIP limit of {int} items", function (this: FlowLabWorld, limit: number) {
+  assert.ok(this.config, "Expected a simulation configuration");
+  this.config = { ...this.config, wipLimits: { ...(this.config.wipLimits ?? {}), Test: limit } };
+});
+
 When("{int} items occupy Development", function (this: FlowLabWorld, limit: number) {
   assert.ok(this.config, "Expected a WIP-limited configuration");
   this.result = runScenario(this.config, 1);
@@ -987,7 +1036,7 @@ Then("the simulation uses those Development operating assumptions", function (th
 
 Then("the CFD, metrics, and daily log expose the resulting concurrency and task-switching effects", function (this: FlowLabWorld) {
   assert.ok(this.config, "Expected operating assumptions");
-  const result = runScenario({ ...this.config, horizonDays: 1, batchDays: [0], batchSize: 4, arrivalRatePerDay: 0 }, 1);
+  const result = runScenario({ ...this.config, horizonDays: 1, batchDays: [0], batchSize: 4, initialBacklog: { pbiCount: 4, bugCount: 0 }, arrivalRatePerDay: 0 }, 1);
   assert.ok(result.snapshots[0].operatingCapacity?.some((capacity) => capacity.stage === "Development" && capacity.concurrentItems > 0));
 });
 
@@ -1165,7 +1214,7 @@ Then("the initial backlog contains {int} PBIs and {int} bugs", function (this: F
   assert.equal(seeded.filter((item) => item.type === "Bug").length, bugCount);
 });
 
-Then("the configured daily arrivals continue independently of the initial backlog", function (this: FlowLabWorld) {
+Then("the configured daily push rate is retained", function (this: FlowLabWorld) {
   assert.ok((this.config?.arrivalRatePerDay ?? 0) > 0);
 });
 
@@ -1205,49 +1254,14 @@ Then("the same seed produces the same initial item IDs, titles, and types", func
   assert.deepEqual(identify(resultFor(this)), identify(this.secondResult));
 });
 
-Given("the arriving PBI share is {float}", function (this: FlowLabWorld, ratio: number) {
-  assert.ok(this.config, "Expected a simulation configuration");
-  this.config = withSimulationSettings(this.config, { arrivalPbiRatio: ratio });
+Then("the daily push rate creates no external work items", function (this: FlowLabWorld) {
+  const result = resultFor(this);
+  assert.ok(result.items.every((item) => item.initial));
+  assert.equal(movementCount(result, "External", "Backlog"), 0);
 });
 
-When("new work arrives during the simulation", function (this: FlowLabWorld) {
-  assert.ok(this.config, "Expected a simulation configuration");
-  this.config = { ...this.config, horizonDays: 2, arrivalRatePerDay: 0, batchDays: [1], batchSize: 4 };
-  this.result = runScenario(this.config, 42);
-  this.secondResult = runScenario(this.config, 42);
-});
-
-Then("each arriving item has a unique ID and non-empty title", function (this: FlowLabWorld) {
-  const arriving = resultFor(this).items.filter((item) => !item.initial);
-  assert.ok(arriving.length > 0);
-  assert.equal(new Set(arriving.map((item) => item.id)).size, arriving.length);
-  assert.ok(arriving.every((item) => item.title.trim().length > 0));
-});
-
-Then("each arriving item identifies whether it is a PBI or a bug", function (this: FlowLabWorld) {
-  assert.ok(resultFor(this).items.filter((item) => !item.initial).every((item) => item.type === "PBI" || item.type === "Bug"));
-});
-
-Then("each arriving item starts in the entry workflow stage with inactive status, 0 percent progress, and empty start and completion dates", function (this: FlowLabWorld) {
-  const entryStage = resultFor(this).config.workflow.stages[0];
-  for (const item of resultFor(this).items.filter((candidate) => !candidate.initial)) {
-    const initialState = item.history[0];
-    assert.equal(initialState.stage, entryStage);
-    assert.equal(initialState.active, false);
-    assert.equal(initialState.progressPercent, 0);
-    assert.equal(initialState.startDate, undefined);
-    assert.equal(initialState.completionDate, undefined);
-  }
-});
-
-Then("no arriving item reuses an ID from the initial backlog or a prior arrival", function (this: FlowLabWorld) {
-  const ids = resultFor(this).items.map((item) => item.id);
-  assert.equal(new Set(ids).size, ids.length);
-});
-
-Then("the same seed produces the same arriving item IDs, titles, types, and arrival days", function (this: FlowLabWorld) {
-  const identify = (result: SimulationResult | undefined) => result?.items.filter((item) => !item.initial).map(({ id, title, type, arrivedAt }) => ({ id, title, type, arrivedAt }));
-  assert.deepEqual(identify(resultFor(this)), identify(this.secondResult));
+Then("all {int} initial items remain in Backlog when the push rate is zero", function (this: FlowLabWorld, count: number) {
+  assert.equal(resultFor(this).snapshots[0].states.Backlog, count);
 });
 
 When("I inspect the Kanban board on day {int}", function (this: FlowLabWorld, day: number) {
@@ -1325,7 +1339,9 @@ Then("the Kanban board shows the same distribution", function (this: FlowLabWorl
 
 Given("an initial backlog item that has not started active work", function (this: FlowLabWorld) {
   this.config = initialBacklogConfig(2, 0, {
-    horizonDays: 3,
+    horizonDays: 4,
+    batchDays: [0],
+    batchSize: 2,
     baseRates: { Development: 1, Test: 0.1 },
     serviceEffort: { Development: { min: 1, max: 1 }, Test: { min: 10, max: 10 } },
     operatingAssumptions: {
@@ -1389,7 +1405,9 @@ Then("its progress does not change", function (this: FlowLabWorld) {
 
 Given("an active initial backlog item with enough remaining work to finish today", function (this: FlowLabWorld) {
   this.config = initialBacklogConfig(1, 0, {
-    horizonDays: 3,
+    horizonDays: 4,
+    batchDays: [0],
+    batchSize: 1,
     baseRates: { Development: 1, Test: 1 },
     serviceEffort: { Development: { min: 1, max: 1 }, Test: { min: 1, max: 1 } },
     operatingAssumptions: {
@@ -1446,4 +1464,237 @@ When("I set the initial bug count to {float}", function (this: FlowLabWorld, cou
 
 Then("I am told that the initial bug count must be a non-negative whole number", function (this: FlowLabWorld) {
   assert.equal(this.initialBacklogError, "The initial bug count must be a non-negative whole number.");
+});
+
+Given("I am editing the feature-backed initial backlog", function (this: FlowLabWorld) {
+  this.config = withSimulationSettings(scenarios.baseline, { featureBacklog: { featureCount: 0, minPbisPerFeature: 5, maxPbisPerFeature: 10, baseBugEffort: 1, feedbackDelayEffortFactor: 0.1 } });
+  this.featureBacklogBeforeEdit = this.config.featureBacklog;
+});
+
+When("I set the initial feature count to {int}", function (this: FlowLabWorld, featureCount: number) {
+  assert.ok(this.config, "Expected a feature-backed backlog configuration");
+  try {
+    this.config = updateFeatureBacklog(this.config, { featureCount });
+  } catch (error) {
+    this.featureBacklogError = error instanceof Error ? error.message : String(error);
+  }
+});
+
+When("I set the PBIs per feature to a minimum of {int} and a maximum of {int}", function (this: FlowLabWorld, minPbisPerFeature: number, maxPbisPerFeature: number) {
+  assert.ok(this.config, "Expected a feature-backed backlog configuration");
+  this.config = updateFeatureBacklog(this.config, { minPbisPerFeature, maxPbisPerFeature });
+});
+
+Then("the next simulation seeds {int} features in Backlog", function (this: FlowLabWorld, featureCount: number) {
+  assert.ok(this.config, "Expected a feature-backed backlog configuration");
+  this.result = runScenario({ ...this.config, horizonDays: 1, arrivalRatePerDay: 0, batchDays: [] }, 42);
+  assert.equal(resultFor(this).features.length, featureCount);
+  assert.ok(resultFor(this).items.filter((item) => item.featureId).every((item) => item.history[0]?.stage === "Backlog"));
+});
+
+Then("every seeded feature contains between {int} and {int} PBIs", function (this: FlowLabWorld, minimum: number, maximum: number) {
+  assert.ok(resultFor(this).features.every((feature) => feature.pbiIds.length >= minimum && feature.pbiIds.length <= maximum));
+});
+
+Then("every seeded PBI has a feature ID and feature title", function (this: FlowLabWorld) {
+  assert.ok(resultFor(this).items.filter((item) => item.featureId).every((item) => item.type === "PBI" && item.featureTitle));
+});
+
+Then("the same seed produces the same features, PBI counts, IDs, and titles", function (this: FlowLabWorld) {
+  assert.ok(this.config, "Expected a feature-backed backlog configuration");
+  const repeated = runScenario({ ...this.config, horizonDays: 1, arrivalRatePerDay: 0, batchDays: [] }, 42);
+  assert.deepEqual(
+    resultFor(this).features.map((feature) => ({ id: feature.id, title: feature.title, pbiIds: feature.pbiIds })),
+    repeated.features.map((feature) => ({ id: feature.id, title: feature.title, pbiIds: feature.pbiIds })),
+  );
+  assert.deepEqual(
+    resultFor(this).items.filter((item) => item.featureId).map(({ id, title }) => ({ id, title })),
+    repeated.items.filter((item) => item.featureId).map(({ id, title }) => ({ id, title })),
+  );
+});
+
+Then("I am told that the initial feature count must be a non-negative whole number", function (this: FlowLabWorld) {
+  assert.equal(this.featureBacklogError, "The initial feature count must be a non-negative whole number.");
+});
+
+Then("the feature-backed initial backlog settings remain unchanged", function (this: FlowLabWorld) {
+  assert.deepEqual(this.config?.featureBacklog, this.featureBacklogBeforeEdit);
+});
+
+When("I set the minimum PBIs per feature to {int} and the maximum to {int}", function (this: FlowLabWorld, minPbisPerFeature: number, maxPbisPerFeature: number) {
+  assert.ok(this.config, "Expected a feature-backed backlog configuration");
+  try {
+    this.config = updateFeatureBacklog(this.config, { minPbisPerFeature, maxPbisPerFeature });
+  } catch (error) {
+    this.featureBacklogError = error instanceof Error ? error.message : String(error);
+  }
+});
+
+Then("I am told that the maximum PBIs per feature must be at least the minimum", function (this: FlowLabWorld) {
+  assert.equal(this.featureBacklogError, "The maximum PBIs per feature must be at least the minimum.");
+});
+
+Given("a feature with {int} PBIs in Development", function (this: FlowLabWorld, pbiCount: number) {
+  this.config = featureFlowConfig({ featureBacklog: { featureCount: 1, minPbisPerFeature: pbiCount, maxPbisPerFeature: pbiCount, baseBugEffort: 1, feedbackDelayEffortFactor: 0.1 } });
+  this.result = runScenario({ ...this.config, horizonDays: 1 }, 42);
+});
+
+Given("{int} PBIs have completed Development", function (this: FlowLabWorld, pbiCount: number) {
+  const feature = resultFor(this).features[0];
+  assert.equal(resultFor(this).items.filter((item) => feature.pbiIds.includes(item.id) && item.developedAt === 0).length, pbiCount);
+});
+
+When("I simulate the next working day", function (this: FlowLabWorld) {
+  assert.ok(this.config, "Expected a feature flow configuration");
+  this.result = runScenario({ ...this.config, horizonDays: 2 }, 42);
+});
+
+Then("the {int} developed PBIs wait for their feature's test gate", function (this: FlowLabWorld, pbiCount: number) {
+  const feature = resultFor(this).features[0];
+  assert.equal(resultFor(this).items.filter((item) => feature.pbiIds.includes(item.id) && item.developedAt === 0 && item.stage === "Integration" && item.status === "waiting").length, pbiCount);
+});
+
+Then("no PBI from that feature enters Test", function (this: FlowLabWorld) {
+  const feature = resultFor(this).features[0];
+  assert.equal(resultFor(this).events.filter((event) => event.type === "entered-stage" && event.stage === "Test" && feature.pbiIds.includes(event.itemId)).length, 0);
+});
+
+When("the third PBI completes Development", function (this: FlowLabWorld) {
+  assert.ok(this.config, "Expected a feature flow configuration");
+  this.result = runScenario({ ...this.config, horizonDays: 4 }, 42);
+});
+
+Then("all {int} PBIs become eligible to enter Test according to Test WIP and concurrency", function (this: FlowLabWorld, pbiCount: number) {
+  const feature = resultFor(this).features[0];
+  assert.equal(resultFor(this).events.filter((event) => event.type === "entered-stage" && event.stage === "Test" && feature.pbiIds.includes(event.itemId)).length, pbiCount);
+});
+
+Given("a feature with {int} developed PBIs whose test gate is open", function (this: FlowLabWorld, pbiCount: number) {
+  this.config = featureFlowConfig({ featureBacklog: { featureCount: 1, minPbisPerFeature: pbiCount, maxPbisPerFeature: pbiCount, baseBugEffort: 1, feedbackDelayEffortFactor: 0.1 }, wipLimits: { Test: 2 } });
+});
+
+When("work is pulled into Test", function (this: FlowLabWorld) {
+  assert.ok(this.config, "Expected a feature flow configuration");
+  this.result = runScenario({ ...this.config, horizonDays: 3 }, 42);
+});
+
+Then("{int} PBIs from that feature enter Test", function (this: FlowLabWorld, pbiCount: number) {
+  const feature = resultFor(this).features[0];
+  assert.equal(resultFor(this).events.filter((event) => event.type === "entered-stage" && event.stage === "Test" && feature.pbiIds.includes(event.itemId)).length, pbiCount);
+});
+
+Then("{int} PBI remains waiting for a free Test WIP slot", function (this: FlowLabWorld, pbiCount: number) {
+  assert.equal(resultFor(this).snapshots[2].states.Integration, pbiCount);
+});
+
+Then("the Kanban board identifies the feature on all three PBIs", function (this: FlowLabWorld) {
+  const feature = resultFor(this).features[0];
+  assert.ok(resultFor(this).items.filter((item) => feature.pbiIds.includes(item.id)).every((item) => item.featureId === feature.id && item.featureTitle === feature.title));
+});
+
+Given("a tested PBI from feature {string}", function (this: FlowLabWorld, _featureTitle: string) {
+  this.config = featureFlowConfig({
+    horizonDays: 41,
+    featureBacklog: { featureCount: 1, minPbisPerFeature: 1, maxPbisPerFeature: 1, baseBugEffort: 1, feedbackDelayEffortFactor: 0.1 },
+    baseRates: { Development: 1, Test: 1 },
+    serviceEffort: { Development: { min: 21, max: 21 }, Test: { min: 19, max: 19 } },
+    operatingAssumptions: {
+      Development: { focusWip: 1, maximumConcurrency: 1, taskSwitchingLossRatio: 0 },
+      Test: { focusWip: 1, maximumConcurrency: 1, taskSwitchingLossRatio: 0 },
+    },
+  });
+});
+
+Given("the bug generation ratio is one bug per tested PBI", function (this: FlowLabWorld) {
+  assert.equal(this.config?.featureBacklog?.featureCount, 1);
+});
+
+When("the PBI completes Test on day {int}", function (this: FlowLabWorld, day: number) {
+  assert.ok(this.config, "Expected a feature flow configuration");
+  this.result = runScenario(this.config, 42);
+  const pbi = resultFor(this).items.find((item) => item.featureId && item.type === "PBI");
+  assert.equal(pbi?.testedAt, day);
+});
+
+Then("exactly one Bug is created for that PBI on day {int}", function (this: FlowLabWorld, day: number) {
+  const pbi = resultFor(this).items.find((item) => item.featureId && item.type === "PBI");
+  const bugs = resultFor(this).items.filter((item) => item.originatingPbiId === pbi?.id);
+  assert.equal(bugs.length, 1);
+  assert.equal(bugs[0].arrivedAt, day);
+});
+
+Then("the Bug has its own unique ID and title", function (this: FlowLabWorld) {
+  const bug = resultFor(this).items.find((item) => item.originatingPbiId);
+  assert.ok(bug && bug.id !== bug.originatingPbiId && bug.title.length > 0);
+});
+
+Then("the Bug retains the originating PBI ID and feature ID", function (this: FlowLabWorld) {
+  const bug = resultFor(this).items.find((item) => item.originatingPbiId);
+  const pbi = resultFor(this).items.find((item) => item.id === bug?.originatingPbiId);
+  assert.equal(bug?.featureId, pbi?.featureId);
+});
+
+Then("the Bug enters Backlog inactive with {int} percent progress", function (this: FlowLabWorld, progress: number) {
+  const bug = resultFor(this).items.find((item) => item.originatingPbiId);
+  assert.equal(bug?.history[0]?.stage, "Backlog");
+  assert.equal(bug?.history[0]?.active, false);
+  assert.equal(bug?.history[0]?.progressPercent, progress);
+});
+
+Then("completing the PBI again does not create another Bug", function (this: FlowLabWorld) {
+  assert.ok(this.config, "Expected a feature flow configuration");
+  const rerun = runScenario({ ...this.config, horizonDays: this.config.horizonDays + 1 }, 42);
+  assert.equal(rerun.items.filter((item) => item.originatingPbiId).length, 1);
+});
+
+Given("a PBI was completed in Development on day {int}", function (this: FlowLabWorld, day: number) {
+  this.feedbackDevelopedDay = day;
+});
+
+Given("that PBI completes Test on day {int}", function (this: FlowLabWorld, day: number) {
+  this.feedbackTestedDay = day;
+});
+
+Given("the base Bug effort is {float}", function (this: FlowLabWorld, effort: number) {
+  this.feedbackBaseBugEffort = effort;
+});
+
+Given("the feedback-delay effort factor is {float} per working day", function (this: FlowLabWorld, factor: number) {
+  this.feedbackDelayFactor = factor;
+});
+
+When("its feedback Bug is created", function (this: FlowLabWorld) {
+  assert.ok(this.feedbackDevelopedDay !== undefined && this.feedbackTestedDay !== undefined && this.feedbackBaseBugEffort !== undefined && this.feedbackDelayFactor !== undefined);
+  this.feedbackResult = feedbackBugEffortFor(this.feedbackBaseBugEffort, this.feedbackDelayFactor, this.feedbackDevelopedDay, this.feedbackTestedDay);
+});
+
+Then("the Bug receives {float} units of fix effort", function (this: FlowLabWorld, effort: number) {
+  assert.ok(Math.abs((this.feedbackResult?.effort ?? 0) - effort) < 1e-9);
+});
+
+Then("the delay is recorded as {int} working days", function (this: FlowLabWorld, days: number) {
+  assert.equal(this.feedbackResult?.delayDays, days);
+});
+
+Given("a feature whose PBIs have completed Test and generated feedback Bugs", function (this: FlowLabWorld) {
+  this.config = featureFlowConfig();
+});
+
+When("all of that feature's feedback Bugs reach Done", function (this: FlowLabWorld) {
+  assert.ok(this.config, "Expected a feature flow configuration");
+  this.result = runScenario(this.config, 42);
+});
+
+Then("the feature is shown as complete", function (this: FlowLabWorld) {
+  assert.ok(resultFor(this).features[0].completedAt !== undefined);
+});
+
+Then("the feature completion day is the latest completion day of its PBIs and Bugs", function (this: FlowLabWorld) {
+  const feature = resultFor(this).features[0];
+  const days = [...feature.pbiIds, ...feature.bugIds].map((id) => resultFor(this).items.find((item) => item.id === id)?.completedAt ?? 0);
+  assert.equal(feature.completedAt, Math.max(...days));
+});
+
+Then("feature metrics count the feature once", function (this: FlowLabWorld) {
+  assert.equal(resultFor(this).metrics.completedFeatures, 1);
 });

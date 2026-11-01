@@ -1,4 +1,4 @@
-import type { ActiveStage, CapacityIncident, InitialBacklog, InitialInventory, OperatingAssumptions, ScenarioConfig, SwarmPolicy } from "./types";
+import type { ActiveStage, CapacityIncident, FeatureBacklogConfig, InitialBacklog, InitialInventory, OperatingAssumptions, ScenarioConfig, SwarmPolicy } from "./types";
 import { activeStages } from "./workflow";
 
 function assertPositiveRate(rate: number, label: string) {
@@ -21,16 +21,9 @@ export function withProcessingRates(config: ScenarioConfig, updates: Partial<Rec
 
 export function withArrivalRate(config: ScenarioConfig, arrivalRatePerDay: number): ScenarioConfig {
   if (!Number.isFinite(arrivalRatePerDay) || arrivalRatePerDay < 0) {
-    throw new Error("The arrival rate must be zero or greater.");
+    throw new Error("The backlog push rate must be zero or greater.");
   }
   return { ...config, arrivalRatePerDay };
-}
-
-export function validateArrivalPbiRatio(ratio: number): number {
-  if (!Number.isFinite(ratio) || ratio < 0 || ratio > 1) {
-    throw new Error("The arriving PBI share must be between zero and one.");
-  }
-  return ratio;
 }
 
 export function validateInitialBacklog(backlog: InitialBacklog): InitialBacklog {
@@ -57,6 +50,25 @@ export function validateInitialInventory(config: ScenarioConfig, inventory: Init
     }
     return [stage, counts];
   }));
+}
+
+export function validateFeatureBacklog(config: FeatureBacklogConfig): FeatureBacklogConfig {
+  if (!Number.isInteger(config.featureCount) || config.featureCount < 0) {
+    throw new Error("The initial feature count must be a non-negative whole number.");
+  }
+  if (!Number.isInteger(config.minPbisPerFeature) || config.minPbisPerFeature < 1) {
+    throw new Error("The minimum PBIs per feature must be a positive whole number.");
+  }
+  if (!Number.isInteger(config.maxPbisPerFeature) || config.maxPbisPerFeature < config.minPbisPerFeature) {
+    throw new Error("The maximum PBIs per feature must be at least the minimum.");
+  }
+  if (!Number.isFinite(config.baseBugEffort) || config.baseBugEffort <= 0) {
+    throw new Error("The base Bug effort must be greater than zero.");
+  }
+  if (!Number.isFinite(config.feedbackDelayEffortFactor) || config.feedbackDelayEffortFactor < 0) {
+    throw new Error("The feedback-delay effort factor must be zero or greater.");
+  }
+  return config;
 }
 
 export function validateWipAssistanceEffectiveness(effectiveness: number): number {
@@ -117,9 +129,9 @@ export function validateSwarm(config: ScenarioConfig, swarm: SwarmPolicy): Swarm
 
 export interface SimulationSettings {
   arrivalRatePerDay?: number;
-  arrivalPbiRatio?: number;
   initialBacklog?: InitialBacklog;
   initialInventory?: InitialInventory;
+  featureBacklog?: FeatureBacklogConfig;
   wipAssistanceEffectiveness?: number;
   operatingAssumptions?: Partial<Record<ActiveStage, OperatingAssumptions>>;
   baseRates?: Partial<Record<ActiveStage, number>>;
@@ -131,15 +143,15 @@ export function withSimulationSettings(config: ScenarioConfig, settings: Simulat
   const withArrival = settings.arrivalRatePerDay === undefined
     ? config
     : withArrivalRate(config, settings.arrivalRatePerDay);
-  const arrivalPbiRatio = settings.arrivalPbiRatio === undefined
-    ? (withArrival.arrivalPbiRatio ?? 0.8)
-    : validateArrivalPbiRatio(settings.arrivalPbiRatio);
   const initialBacklog = settings.initialBacklog === undefined
     ? (withArrival.initialBacklog ?? { pbiCount: 0, bugCount: 0 })
     : validateInitialBacklog(settings.initialBacklog);
   const initialInventory = settings.initialInventory === undefined
     ? withArrival.initialInventory
     : validateInitialInventory(withArrival, settings.initialInventory);
+  const featureBacklog = settings.featureBacklog === undefined
+    ? (withArrival.featureBacklog ?? { featureCount: 0, minPbisPerFeature: 5, maxPbisPerFeature: 10, baseBugEffort: 1, feedbackDelayEffortFactor: 0.1 })
+    : validateFeatureBacklog(settings.featureBacklog);
   const withRates = withProcessingRates(withArrival, settings.baseRates ?? {});
   const wipAssistanceEffectiveness = settings.wipAssistanceEffectiveness === undefined
     ? (withRates.wipAssistanceEffectiveness ?? 0.75)
@@ -151,5 +163,5 @@ export function withSimulationSettings(config: ScenarioConfig, settings: Simulat
     : withOperating.incident;
   const swarm = settings.swarm ?? withOperating.swarm;
   if (swarm && active.length >= 2) validateSwarm(withOperating, swarm);
-  return { ...withOperating, arrivalPbiRatio, initialBacklog, initialInventory, wipAssistanceEffectiveness, incident, swarm: active.length >= 2 ? swarm : undefined };
+  return { ...withOperating, initialBacklog, initialInventory, featureBacklog, wipAssistanceEffectiveness, incident, swarm: active.length >= 2 ? swarm : undefined };
 }

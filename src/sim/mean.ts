@@ -32,6 +32,7 @@ function meanMetrics(runs: ReturnType<typeof runScenario>[]): Metrics {
   };
   return {
     completedItems: averageMetric("completedItems") ?? 0,
+    completedFeatures: averageMetric("completedFeatures") ?? 0,
     throughputPerWeek: averageMetric("throughputPerWeek") ?? 0,
     medianCycleTime: averageMetric("medianCycleTime"),
     p85CycleTime: averageMetric("p85CycleTime"),

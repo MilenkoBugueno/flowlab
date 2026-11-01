@@ -1,6 +1,6 @@
 import * as d3 from "d3";
 import { useMemo, useRef } from "react";
-import type { DailySnapshot, SimulationViewResult, Stage } from "../sim/types";
+import type { DailySnapshot, SimulationViewResult, Stage, WorkflowConfig } from "../sim/types";
 import { activeStages } from "../sim/workflow";
 
 const palette = ["#cbd5e1", "#38bdf8", "#fb923c", "#a78bfa", "#f472b6", "#facc15", "#34d399", "#60a5fa"];
@@ -12,9 +12,11 @@ interface Props {
   result: SimulationViewResult;
   selectedDay: number;
   onSelectDay: (day: number) => void;
+  showInactiveWork: boolean;
+  onShowInactiveWorkChange: (show: boolean) => void;
 }
 
-export function CfdChart({ result, selectedDay, onSelectDay }: Props) {
+export function CfdChart({ result, selectedDay, onSelectDay, showInactiveWork, onShowInactiveWorkChange }: Props) {
   const svgRef = useRef<SVGSVGElement>(null);
   const { config, snapshots } = result;
   const meanRunCount = "seeds" in result ? result.seeds.length : 1;
@@ -40,6 +42,11 @@ export function CfdChart({ result, selectedDay, onSelectDay }: Props) {
     .x((point) => x(point.data.day))
     .y0((point) => y(point[0]))
     .y1((point) => y(point[1]));
+  const activeArea = (series: d3.Series<ChartRow, Stage>) => d3
+    .area<d3.SeriesPoint<ChartRow>>()
+    .x((point) => x(point.data.day))
+    .y0((point) => y(point[0]))
+    .y1((point) => y(point[0] + Math.min(snapshots[point.data.day]?.active[series.key] ?? 0, point[1] - point[0])))(series);
   const selected = snapshots[selectedDay] ?? snapshots.at(-1);
   const ticks = x.ticks(6);
   const yTicks = y.ticks(5);
@@ -59,12 +66,19 @@ export function CfdChart({ result, selectedDay, onSelectDay }: Props) {
           <p className="eyebrow">Cumulative flow diagram</p>
           <h2 id="cfd-title">Where work is accumulating</h2>
         </div>
-        <p className="chart-hint">{meanRunCount > 1 ? `Mean of ${meanRunCount} simulations · select a day to inspect averages.` : "Select a day on the chart to inspect its queues."}</p>
+        <div className="chart-controls">
+          <p className="chart-hint">{meanRunCount > 1 ? `Mean of ${meanRunCount} simulations · select a day to inspect averages.` : "Select a day on the chart to inspect its queues."}</p>
+          <label className="cfd-inactive-toggle"><input type="checkbox" checked={showInactiveWork} onChange={(event) => onShowInactiveWorkChange(event.target.checked)} />Show inactive work</label>
+        </div>
       </div>
       <div className="legend" aria-label="CFD state legend">
         {stateOrder.map((stage) => (
           <span key={stage}><i style={{ backgroundColor: colours[stage] }} />{stage}</span>
         ))}
+        {showInactiveWork && <>
+          <span className="activity-key"><i className="active-key" />Active work</span>
+          <span className="activity-key"><i className="inactive-key" />Inactive / waiting</span>
+        </>}
       </div>
       <svg
         ref={svgRef}
@@ -74,6 +88,14 @@ export function CfdChart({ result, selectedDay, onSelectDay }: Props) {
         aria-label="Cumulative flow diagram showing work in each configured workflow state over working days"
         onClick={selectFromPointer}
       >
+        <defs>
+          {workflowStages.map((stage, index) => (
+            <pattern key={stage} id={`inactive-${index}`} width="7" height="7" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+              <rect width="7" height="7" fill={colours[stage]} opacity="0.28" />
+              <line x1="0" y1="0" x2="0" y2="7" stroke={colours[stage]} strokeWidth="2" opacity="0.72" />
+            </pattern>
+          ))}
+        </defs>
         <rect x={margin.left} y={margin.top} width={width - margin.left - margin.right} height={height - margin.top - margin.bottom} className="plot-background" />
         {yTicks.map((tick) => (
           <g key={tick}>
@@ -82,7 +104,16 @@ export function CfdChart({ result, selectedDay, onSelectDay }: Props) {
           </g>
         ))}
         {stacked.map((series) => (
-          <path key={series.key} d={area(series) ?? ""} fill={colours[series.key]} className="area" />
+          <g key={series.key}>
+            {series.key === workflowStages.at(-1) || !showInactiveWork ? (
+              <path d={area(series) ?? ""} fill={colours[series.key]} className="area" />
+            ) : (
+              <>
+                {showInactiveWork && <path d={area(series) ?? ""} fill={`url(#inactive-${workflowStages.indexOf(series.key)})`} className="area inactive-area" />}
+                <path d={activeArea(series) ?? ""} fill={colours[series.key]} className="active-area" />
+              </>
+            )}
+          </g>
         ))}
         <line x1={x(selectedDay)} x2={x(selectedDay)} y1={margin.top} y2={height - margin.bottom} className="selected-day" />
         {config.incident && (
@@ -106,14 +137,15 @@ export function CfdChart({ result, selectedDay, onSelectDay }: Props) {
         <text x={(margin.left + width - margin.right) / 2} y={height - 10} className="axis-label" textAnchor="middle">Working day</text>
         <text transform={`translate(16 ${(margin.top + height - margin.bottom) / 2}) rotate(-90)`} className="axis-label" textAnchor="middle">Items</text>
       </svg>
-      {selected && <DayInspector snapshot={selected} stages={workflowStages} />}
+      {selected && <DayInspector snapshot={selected} workflow={config.workflow} />}
     </section>
   );
 }
 
-function DayInspector({ snapshot, stages }: { snapshot: DailySnapshot; stages: Stage[] }) {
+function DayInspector({ snapshot, workflow }: { snapshot: DailySnapshot; workflow: WorkflowConfig }) {
+  const { stages } = workflow;
   const statesToInspect = stages.slice(0, -1);
-  const active = new Set(activeStages({ stages }));
+  const active = new Set(activeStages(workflow));
   return (
     <div className="day-inspector" aria-live="polite">
       <div>
