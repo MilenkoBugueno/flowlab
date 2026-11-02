@@ -1,12 +1,13 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { CfdChart } from "./chart/CfdChart";
 import { DailyLog } from "./DailyLog";
 import { KanbanBoard } from "./KanbanBoard";
 import { runScenario } from "./sim/engine";
 import { runMeanScenario, validateMeanSeedCount } from "./sim/mean";
+import { configFromProjectFile, createProjectFile, parseProjectFile } from "./sim/project";
 import { scenarioList, scenarios } from "./sim/scenarios";
 import { withSimulationSettings } from "./sim/settings";
-import type { CapacityIncident, FeatureBacklogConfig, FeatureFocusPolicy, InitialInventory, Metrics, OperatingAssumptions, ScenarioId, SwarmPolicy } from "./sim/types";
+import type { CapacityIncident, FeatureBacklogConfig, FeatureFocusPolicy, InitialInventory, Metrics, OperatingAssumptions, ProjectPhase, ScenarioConfig, ScenarioId, SwarmPolicy } from "./sim/types";
 import { activeStages, withWorkflow } from "./sim/workflow";
 
 const metricLabels: Array<[keyof Metrics, string, string]> = [
@@ -45,8 +46,6 @@ export default function App() {
   const [savedWipAssistanceEffectiveness, setSavedWipAssistanceEffectiveness] = useState(scenarios.baseline.wipAssistanceEffectiveness ?? 0.75);
   const [arrivalRateError, setArrivalRateError] = useState<string>();
   const [savedInitialInventory, setSavedInitialInventory] = useState<InitialInventory>({});
-  const [initialInventoryDraft, setInitialInventoryDraft] = useState<Partial<Record<string, { pbiCount: string; bugCount: string }>>>({});
-  const [initialInventoryError, setInitialInventoryError] = useState<string>();
   const [savedFeatureBacklog, setSavedFeatureBacklog] = useState<FeatureBacklogConfig>(defaultFeatureBacklog);
   const [featureBacklogDraft, setFeatureBacklogDraft] = useState<FeatureBacklogConfig>(defaultFeatureBacklog);
   const [featureBacklogError, setFeatureBacklogError] = useState<string>();
@@ -71,11 +70,24 @@ export default function App() {
   const [incidentDraft, setIncidentDraft] = useState<CapacityIncident>();
   const [swarmDraft, setSwarmDraft] = useState<SwarmPolicy>();
   const [interventionError, setInterventionError] = useState<string>();
+  const [projectName, setProjectName] = useState("FlowLab project");
+  const [projectPhases, setProjectPhases] = useState<ProjectPhase[]>();
+  const [projectHeaderOverrides, setProjectHeaderOverrides] = useState<Partial<ScenarioConfig>>({});
+  const [projectFileError, setProjectFileError] = useState<string>();
+  const projectFileInput = useRef<HTMLInputElement>(null);
   const seed = Number.isFinite(Number(seedInput)) ? Math.max(0, Math.floor(Number(seedInput))) : 42;
-  const workflowConfig = useMemo(() => withWorkflow(scenarios[scenarioId], workflow), [scenarioId, workflow]);
-  const selectedConfig = useMemo(
+  const projectBaseConfig = useMemo(
+    () => ({ ...scenarios[scenarioId], ...projectHeaderOverrides, projectPhases: undefined }),
+    [scenarioId, projectHeaderOverrides],
+  );
+  const workflowConfig = useMemo(() => withWorkflow(projectBaseConfig, workflow), [projectBaseConfig, workflow]);
+  const customizedConfig = useMemo(
     () => withSimulationSettings(workflowConfig, { arrivalRatePerDay: savedArrivalRate, initialInventory: inventoryForStages(savedInitialInventory, workflowConfig.workflow.stages), featureBacklog: savedFeatureBacklog, featureFocus: savedFeatureFocus, wipAssistanceEffectiveness: savedWipAssistanceEffectiveness, baseRates: savedRates, operatingAssumptions: savedOperatingAssumptions, incident: savedIncident, swarm: savedSwarm }),
     [workflowConfig, savedArrivalRate, savedInitialInventory, savedFeatureBacklog, savedFeatureFocus, savedWipAssistanceEffectiveness, savedRates, savedOperatingAssumptions, savedIncident, savedSwarm],
+  );
+  const selectedConfig = useMemo(
+    () => projectPhases ? { ...customizedConfig, projectPhases } : customizedConfig,
+    [customizedConfig, projectPhases],
   );
   const baselineConfig = useMemo(
     () => withSimulationSettings(scenarios.baseline, { arrivalRatePerDay: savedArrivalRate, initialInventory: inventoryForStages(savedInitialInventory, scenarios.baseline.workflow.stages), featureBacklog: savedFeatureBacklog, wipAssistanceEffectiveness: savedWipAssistanceEffectiveness, operatingAssumptions: savedOperatingAssumptions }),
@@ -95,7 +107,6 @@ export default function App() {
   const [showFeatureCompletions, setShowFeatureCompletions] = useState(false);
   const scenario = scenarios[scenarioId];
   const activeWorkflowStages = activeStages(workflowConfig.workflow);
-  const initialInventoryStages = workflowConfig.workflow.stages.slice(0, -1);
   const fallbackIncident: CapacityIncident = {
     stage: activeWorkflowStages[0] ?? "",
     startDay: 30,
@@ -115,11 +126,73 @@ export default function App() {
 
   const updateScenario = (id: ScenarioId) => {
     setScenarioId(id);
+    setProjectPhases(undefined);
+    setProjectHeaderOverrides({});
     setSavedFeatureFocus(undefined);
     setFeatureFocusEnabled(scenarios[id].featureFocus !== undefined);
     setFeatureFocusStartDay(String(scenarios[id].featureFocus?.startDay ?? 0));
     setFeatureFocusError(undefined);
     setSelectedDay(50);
+  };
+
+  const saveProjectFile = () => {
+    const project = createProjectFile(selectedConfig, seed, projectName.trim() || "FlowLab project");
+    const blob = new Blob([JSON.stringify(project, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${project.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "") || "flowlab-project"}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const loadProjectFile = async (file?: File) => {
+    if (!file) return;
+    try {
+      const project = parseProjectFile(await file.text());
+      const config = configFromProjectFile(project);
+      const scenario = Object.hasOwn(scenarios, config.id) ? config.id : "baseline";
+      setScenarioId(scenario);
+      setSeedInput(String(project.seed));
+      setProjectName(project.name);
+      setWorkflow(config.workflow.stages);
+      setWorkflowInput(config.workflow.stages.join(", "));
+      setProjectHeaderOverrides({
+        label: config.label,
+        summary: config.summary,
+        horizonDays: config.horizonDays,
+        warmupDays: config.warmupDays,
+        initialBacklog: config.initialBacklog,
+        batchDays: config.batchDays,
+        batchSize: config.batchSize,
+        serviceEffort: config.serviceEffort,
+        wipLimits: config.wipLimits,
+      });
+      setSavedArrivalRate(config.arrivalRatePerDay);
+      setArrivalRateInput(String(config.arrivalRatePerDay));
+      setSavedWipAssistanceEffectiveness(config.wipAssistanceEffectiveness ?? 0.75);
+      setWipAssistanceInput(String(config.wipAssistanceEffectiveness ?? 0.75));
+      setSavedInitialInventory(config.initialInventory ?? (config.initialBacklog ? { [config.workflow.stages[0]]: config.initialBacklog } : {}));
+      setSavedFeatureBacklog(config.featureBacklog ?? defaultFeatureBacklog);
+      setFeatureBacklogDraft(config.featureBacklog ?? defaultFeatureBacklog);
+      setSavedRates(config.baseRates as Record<string, number>);
+      setRateDraft({});
+      setSavedOperatingAssumptions(config.operatingAssumptions ?? {});
+      setOperatingDraft({});
+      setSavedIncident(config.incident);
+      setSavedSwarm(config.swarm);
+      setSavedFeatureFocus(config.featureFocus ?? null);
+      setFeatureFocusEnabled(config.featureFocus !== undefined);
+      setFeatureFocusStartDay(String(config.featureFocus?.startDay ?? 0));
+      setProjectPhases(config.projectPhases);
+      setSelectedDay(0);
+      setProjectFileError(undefined);
+      setRunKey((value) => value + 1);
+    } catch (error) {
+      setProjectFileError(error instanceof Error ? error.message : "Unable to load this project file.");
+    } finally {
+      if (projectFileInput.current) projectFileInput.current.value = "";
+    }
   };
 
   const saveWorkflow = () => {
@@ -172,28 +245,6 @@ export default function App() {
         setCapacityError(message);
         setArrivalRateError(undefined);
       }
-    }
-  };
-
-  const updateInitialInventory = (stage: string, field: "pbiCount" | "bugCount", value: string) => {
-    const current = initialInventoryDraft[stage]
-      ?? { pbiCount: String(selectedConfig.initialInventory?.[stage]?.pbiCount ?? 0), bugCount: String(selectedConfig.initialInventory?.[stage]?.bugCount ?? 0) };
-    setInitialInventoryDraft((draft) => ({ ...draft, [stage]: { ...current, [field]: value } }));
-  };
-
-  const saveInitialInventory = () => {
-    try {
-      const initialInventory = Object.fromEntries(initialInventoryStages.map((stage) => {
-        const counts = initialInventoryDraft[stage]
-          ?? { pbiCount: String(selectedConfig.initialInventory?.[stage]?.pbiCount ?? 0), bugCount: String(selectedConfig.initialInventory?.[stage]?.bugCount ?? 0) };
-        return [stage, { pbiCount: Number(counts.pbiCount), bugCount: Number(counts.bugCount) }];
-      }));
-      withSimulationSettings(workflowConfig, { initialInventory });
-      setSavedInitialInventory(initialInventory);
-      setInitialInventoryDraft({});
-      setInitialInventoryError(undefined);
-    } catch (error) {
-      setInitialInventoryError(error instanceof Error ? error.message : "Unable to save the initial workflow inventory.");
     }
   };
 
@@ -283,6 +334,23 @@ export default function App() {
             {meanSeedError && <p className="settings-error" role="alert">{meanSeedError}</p>}
           </section>
 
+          <section className="panel-section project-file-control" aria-labelledby="project-file-heading">
+            <p className="eyebrow">Portable setup</p>
+            <h2 id="project-file-heading">Project file</h2>
+            <p>Load a time-phased simulation or download the current setup as JSON.</p>
+            <label htmlFor="project-name">Project name</label>
+            <input id="project-name" value={projectName} onChange={(event) => setProjectName(event.target.value)} />
+            <div className="project-file-actions">
+              <button type="button" onClick={() => projectFileInput.current?.click()}>Load file</button>
+              <button type="button" onClick={saveProjectFile}>Save file</button>
+            </div>
+            <input ref={projectFileInput} className="visually-hidden" type="file" accept="application/json,.json" onChange={(event) => void loadProjectFile(event.target.files?.[0])} />
+            {projectPhases && <div className="project-phase-list" aria-label="Project settings timeline">
+              {projectPhases.map((phase) => <p key={phase.id}><strong>Day {phase.startDay}–{phase.endDay}</strong> {phase.label}</p>)}
+            </div>}
+            {projectFileError && <p className="settings-error" role="alert">{projectFileError}</p>}
+          </section>
+
           <section className="panel-section scenario-section" aria-labelledby="scenario-heading">
             <p className="eyebrow">Intervention</p>
             <h2 id="scenario-heading">Scenario</h2>
@@ -347,21 +415,7 @@ export default function App() {
           </details>
 
           <details className="settings-panel">
-            <summary>Initial workflow inventory</summary>
-            <p>Seed each non-terminal stage before day 0. These items are not counted as new daily arrivals.</p>
-            <div className="initial-inventory-list">
-              {initialInventoryStages.map((stage) => {
-                const counts = initialInventoryDraft[stage]
-                  ?? { pbiCount: String(selectedConfig.initialInventory?.[stage]?.pbiCount ?? 0), bugCount: String(selectedConfig.initialInventory?.[stage]?.bugCount ?? 0) };
-                return <fieldset key={stage}>
-                  <legend>{stage}</legend>
-                  <label>PBIs<input type="number" min="0" step="1" value={counts.pbiCount} onChange={(event) => updateInitialInventory(stage, "pbiCount", event.target.value)} /></label>
-                  <label>Bugs<input type="number" min="0" step="1" value={counts.bugCount} onChange={(event) => updateInitialInventory(stage, "bugCount", event.target.value)} /></label>
-                </fieldset>;
-              })}
-            </div>
-            <button type="button" onClick={saveInitialInventory}>Save initial inventory</button>
-            {initialInventoryError && <p className="settings-error" role="alert">{initialInventoryError}</p>}
+            <summary>Initial feature backlog</summary>
             <div className="feature-backlog-settings">
               <p>Feature-backed backlog</p>
               <label>Initial features<input type="number" min="0" step="1" value={featureBacklogDraft.featureCount} onChange={(event) => setFeatureBacklogDraft((draft) => ({ ...draft, featureCount: Number(event.target.value) }))} /></label>

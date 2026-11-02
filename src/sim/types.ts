@@ -52,6 +52,27 @@ export interface FeatureFocusPolicy {
   startDay: number;
 }
 
+/** Settings that may change while a project simulation is already running. */
+export interface PhaseSettings {
+  arrivalRatePerDay: number;
+  baseRates: Partial<Record<ActiveStage, number>>;
+  serviceEffort: Partial<Record<ActiveStage, { min: number; max: number }>>;
+  operatingAssumptions: Partial<Record<ActiveStage, OperatingAssumptions>>;
+  wipLimits?: Partial<Record<Stage, number>>;
+  wipAssistanceEffectiveness: number;
+  incident?: CapacityIncident;
+  swarm?: SwarmPolicy;
+  featureFocus?: FeatureFocusPolicy;
+}
+
+export interface ProjectPhase {
+  id: string;
+  label: string;
+  startDay: number;
+  endDay: number;
+  settings: PhaseSettings;
+}
+
 export interface Feature {
   id: string;
   title: string;
@@ -81,6 +102,8 @@ export interface ScenarioConfig {
   wipAssistanceEffectiveness?: number;
   incident?: CapacityIncident;
   swarm?: SwarmPolicy;
+  /** Optional start-of-day policy timeline supplied by a project file. */
+  projectPhases?: ProjectPhase[];
 }
 
 export interface WorkItem {
@@ -138,6 +161,7 @@ export interface DailySnapshot {
   capacityAssistance?: CapacityAssistance[];
   operatingCapacity?: DailyOperatingCapacity[];
   featureFocus?: FeatureFocusState;
+  projectPhase?: { id: string; label: string };
 }
 
 export interface CapacityAssistance {
@@ -173,6 +197,7 @@ export interface DailyLogEntry {
   seed: number;
   movements: DailyMovement[];
   featureFocus?: FeatureFocusState;
+  projectPhase?: { id: string; label: string };
 }
 
 export interface Metrics {

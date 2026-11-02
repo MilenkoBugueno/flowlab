@@ -158,6 +158,12 @@ export function CfdChart({ result, selectedDay, onSelectDay, showInactiveWork, o
             <text x={x(config.swarm.startDay) + 4} y={margin.top + 30} className="annotation">Swarm begins</text>
           </g>
         )}
+        {(config.projectPhases ?? []).filter((phase) => phase.startDay > 0).map((phase) => (
+          <g key={phase.id}>
+            <line x1={x(phase.startDay)} x2={x(phase.startDay)} y1={margin.top} y2={height - margin.bottom} className="phase-line" />
+            <text x={x(phase.startDay) + 4} y={margin.top + 46} className="annotation">{phase.label}</text>
+          </g>
+        ))}
         {ticks.map((tick) => (
           <g key={tick}>
             <line x1={x(tick)} x2={x(tick)} y1={height - margin.bottom} y2={height - margin.bottom + 5} className="axis-line" />
@@ -185,6 +191,7 @@ function DayInspector({ snapshot, workflow }: { snapshot: DailySnapshot; workflo
       <div><span>Arrived</span><strong>{formatCount(snapshot.arrivals)}</strong></div>
       <div><span>Completed</span><strong>{formatCount(snapshot.completions)}</strong></div>
       {snapshot.featureFocus && <div><span>Finishing focus</span><strong>{snapshot.featureFocus.title}</strong></div>}
+      {snapshot.projectPhase && <div><span>Project phase</span><strong>{snapshot.projectPhase.label}</strong></div>}
       {statesToInspect.map((stage) => (
         <div key={stage}><span>{stage}</span><strong>{formatCount(snapshot.states[stage])} {active.has(stage) && <small>({formatCount(snapshot.active[stage] ?? 0)} active)</small>}</strong></div>
       ))}

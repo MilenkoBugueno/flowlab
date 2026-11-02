@@ -2,9 +2,11 @@ import assert from "node:assert/strict";
 import { Given, Then, When, World, setWorldConstructor } from "@cucumber/cucumber";
 import { effectiveCapacityFor, feedbackBugEffortFor, processingRateFor, runScenario } from "../../src/sim/engine";
 import { runMeanScenario, validateMeanSeedCount } from "../../src/sim/mean";
+import { configFromProjectFile, createProjectFile, parseProjectFile, phaseSettingsFor } from "../../src/sim/project";
+import type { ProjectFile } from "../../src/sim/project";
 import { scenarios } from "../../src/sim/scenarios";
 import { validateOperatingAssumptions, withOperatingAssumptions, withProcessingRates, withSimulationSettings } from "../../src/sim/settings";
-import type { CapacityIncident, FeatureBacklogConfig, InitialBacklog, InitialInventory, ItemTimelineState, MeanSimulationResult, OperatingAssumptions, ScenarioConfig, SimulationResult, SwarmPolicy, WorkItem } from "../../src/sim/types";
+import type { CapacityIncident, FeatureBacklogConfig, InitialBacklog, InitialInventory, ItemTimelineState, MeanSimulationResult, OperatingAssumptions, ProjectPhase, ScenarioConfig, SimulationResult, SwarmPolicy, WorkItem } from "../../src/sim/types";
 import { activeStages, withWorkflow } from "../../src/sim/workflow";
 
 class FlowLabWorld extends World {
@@ -47,6 +49,10 @@ class FlowLabWorld extends World {
   feedbackTestedDay?: number;
   feedbackResult?: { effort: number; delayDays: number };
   inspectedItemId?: string;
+  projectFile?: ProjectFile;
+  projectError?: string;
+  projectBeforeLoad?: ScenarioConfig;
+  projectSeed?: number;
 }
 
 setWorldConstructor(FlowLabWorld);
@@ -214,6 +220,42 @@ function updateFeatureBacklog(config: ScenarioConfig, updates: Partial<FeatureBa
   return withSimulationSettings(config, {
     featureBacklog: { ...(config.featureBacklog ?? { featureCount: 0, minPbisPerFeature: 5, maxPbisPerFeature: 10, baseBugEffort: 1, feedbackDelayEffortFactor: 0.1 }), ...updates },
   });
+}
+
+function projectHeader(horizonDays = 121, featureCount = 10, overrides: Partial<ScenarioConfig> = {}): ScenarioConfig {
+  return {
+    ...scenarios.baseline,
+    horizonDays,
+    warmupDays: 0,
+    arrivalRatePerDay: 100,
+    batchDays: [],
+    batchSize: 0,
+    initialInventory: {},
+    featureBacklog: { featureCount, minPbisPerFeature: 1, maxPbisPerFeature: 1, baseBugEffort: 1, feedbackDelayEffortFactor: 0 },
+    baseRates: { Development: 1, Test: 1 },
+    serviceEffort: { Development: { min: 1, max: 1 }, Test: { min: 1, max: 1 } },
+    operatingAssumptions: {
+      Development: { focusWip: 5, maximumConcurrency: 16, taskSwitchingLossRatio: 0.2 },
+      Test: { focusWip: 5, maximumConcurrency: 16, taskSwitchingLossRatio: 0.2 },
+    },
+    ...overrides,
+  };
+}
+
+function addProjectPhase(world: FlowLabWorld, id: string, label: string, startDay: number, endDay: number, overrides: Partial<ScenarioConfig> = {}) {
+  const header = world.config ?? projectHeader();
+  world.config = header;
+  const settingsConfig = { ...header, ...overrides, workflow: header.workflow, horizonDays: header.horizonDays };
+  const phase: ProjectPhase = { id, label, startDay, endDay, settings: phaseSettingsFor(settingsConfig) };
+  if (!world.projectFile) world.projectFile = { formatVersion: 1, name: "Project test", seed: world.projectSeed ?? 42, config: header, phases: [] };
+  world.projectFile.phases.push(phase);
+}
+
+function loadProject(world: FlowLabWorld) {
+  assert.ok(world.projectFile, "Expected a project file");
+  const loaded = parseProjectFile(JSON.stringify(world.projectFile));
+  world.config = configFromProjectFile(loaded);
+  world.result = runScenario(world.config, loaded.seed);
 }
 
 Given("the standard FlowLab baseline scenario", function (this: FlowLabWorld) {
@@ -1313,6 +1355,11 @@ Then("the number of cards in each stage matches the CFD state for that day", fun
 });
 
 When("I simulate day {int}", function (this: FlowLabWorld, day: number) {
+  if (this.projectFile) {
+    loadProject(this);
+    assert.ok(resultFor(this).snapshots[day]);
+    return;
+  }
   assert.ok(this.config, "Expected a simulation configuration");
   this.config = { ...this.config, horizonDays: Math.max(this.config.horizonDays, day + 1) };
   this.result = runScenario(this.config, 42);
@@ -1996,4 +2043,243 @@ Then("the daily log identifies the focused Feature and any completion-focus swar
   const result = resultFor(this);
   assert.equal(result.dailyLog[2].featureFocus?.id, "FEATURE-001");
   assert.ok(result.snapshots[2].capacityAssistance?.some((entry) => entry.reason === "completion-focus"));
+});
+
+Given("a project file with {int} initial Features and seed {int}", function (this: FlowLabWorld, featureCount: number, seed: number) {
+  this.projectSeed = seed;
+  this.config = projectHeader(121, featureCount);
+  this.projectFile = { formatVersion: 1, name: "Project test", seed, config: this.config, phases: [] };
+});
+
+Given("a Baseline phase from day {int} through day {int}", function (this: FlowLabWorld, startDay: number, endDay: number) {
+  addProjectPhase(this, "baseline", "Baseline", startDay, endDay);
+});
+
+Given("a WIP Limits phase from day {int} through day {int}", function (this: FlowLabWorld, startDay: number, endDay: number) {
+  addProjectPhase(this, "wip", "WIP Limits", startDay, endDay, { wipLimits: { Development: 5, Integration: 5, Test: 5 } });
+});
+
+When("I load the project file", function (this: FlowLabWorld) {
+  loadProject(this);
+});
+
+Then("the simulation horizon is {int} working days", function (this: FlowLabWorld, horizon: number) {
+  assert.equal(resultFor(this).snapshots.length, horizon);
+});
+
+Then("exactly {int} Features are created before day 0", function (this: FlowLabWorld, count: number) {
+  assert.equal(resultFor(this).features.length, count);
+});
+
+Then("Baseline settings apply on days {int} through {int}", function (this: FlowLabWorld, startDay: number, endDay: number) {
+  for (let day = startDay; day <= endDay; day += 1) assert.equal(resultFor(this).snapshots[day].projectPhase?.label, "Baseline");
+});
+
+Then("Development, Integration, and Test WIP limits apply from day {int} through day {int}", function (this: FlowLabWorld, startDay: number, endDay: number) {
+  for (let day = startDay; day <= endDay; day += 1) assert.equal(resultFor(this).snapshots[day].projectPhase?.label, "WIP Limits");
+  assert.deepEqual(resultFor(this).config.projectPhases?.[1].settings.wipLimits, { Development: 5, Integration: 5, Test: 5 });
+});
+
+Given("a loaded project with a Baseline phase through day {int}", function (this: FlowLabWorld, endDay: number) {
+  this.projectSeed = 42;
+  this.config = projectHeader(endDay + 2, 0, { initialInventory: { Development: { pbiCount: 8, bugCount: 0 } }, baseRates: { Development: 0.1, Test: 0.1 }, serviceEffort: { Development: { min: 10, max: 10 }, Test: { min: 10, max: 10 } } });
+  this.projectFile = { formatVersion: 1, name: "Boundary", seed: 42, config: this.config, phases: [] };
+  addProjectPhase(this, "baseline", "Baseline", 0, endDay);
+});
+
+Given("a WIP Limits phase beginning on day {int}", function (this: FlowLabWorld, startDay: number) {
+  assert.ok(this.config, "Expected a project header");
+  addProjectPhase(this, "wip", "WIP Limits", startDay, this.config.horizonDays - 1, { wipLimits: { Development: 5, Integration: 5, Test: 5 } });
+});
+
+Then("day {int} admissions and stage movements respect the WIP limits", function (this: FlowLabWorld, day: number) {
+  assert.equal(resultFor(this).snapshots[day].projectPhase?.label, "WIP Limits");
+});
+
+Then("work already above a newly introduced WIP limit is retained", function (this: FlowLabWorld) {
+  assert.ok((resultFor(this).snapshots.at(-1)?.states.Development ?? 0) > 5);
+});
+
+Then("no new item enters a full WIP-limited stage until a slot is free", function (this: FlowLabWorld) {
+  const result = resultFor(this);
+  assert.equal(result.events.filter((event) => event.day === 51 && event.type === "entered-stage" && event.stage === "Development").length, 0);
+});
+
+Given("a loaded project with WIP Limits through day {int}", function (this: FlowLabWorld, endDay: number) {
+  this.projectSeed = 42;
+  this.config = projectHeader(endDay + 2, 0, { initialBacklog: { pbiCount: 8, bugCount: 0 } });
+  this.projectFile = { formatVersion: 1, name: "WIP removal", seed: 42, config: this.config, phases: [] };
+  addProjectPhase(this, "wip", "WIP Limits", 0, endDay, { wipLimits: { Development: 1, Integration: 1, Test: 1 } });
+});
+
+Given("a Baseline phase beginning on day {int}", function (this: FlowLabWorld, startDay: number) {
+  assert.ok(this.config, "Expected a project header");
+  addProjectPhase(this, "baseline", "Baseline", startDay, this.config.horizonDays - 1);
+});
+
+Then("stage WIP limits no longer restrict admissions from day {int}", function (this: FlowLabWorld, day: number) {
+  assert.equal(resultFor(this).snapshots[day].projectPhase?.label, "Baseline");
+  assert.equal(resultFor(this).config.projectPhases?.[1].settings.wipLimits, undefined);
+});
+
+Then("all existing work remains in its simulated stage with its existing progress", function (this: FlowLabWorld) {
+  assert.ok(resultFor(this).items.every((item) => item.history.length > 0));
+});
+
+Given("a project file with feature-backed initial work", function (this: FlowLabWorld) {
+  this.projectSeed = 42;
+  this.config = projectHeader(121, 3, { baseRates: { Development: 0.01, Test: 0.01 }, serviceEffort: { Development: { min: 100, max: 100 }, Test: { min: 100, max: 100 } } });
+  this.projectFile = { formatVersion: 1, name: "Focus", seed: 42, config: this.config, phases: [] };
+});
+
+Given("a WIP Limits plus Start Finishing phase from day {int} through day {int}", function (this: FlowLabWorld, startDay: number, endDay: number) {
+  addProjectPhase(this, "combined", "WIP Limits + Start Finishing", startDay, endDay, { wipLimits: { Development: 5, Integration: 5, Test: 5 }, featureFocus: { startDay } });
+});
+
+When("I load and simulate the project with seed {int}", function (this: FlowLabWorld, seed: number) {
+  assert.ok(this.projectFile, "Expected a project file");
+  this.projectFile.seed = seed;
+  loadProject(this);
+});
+
+Then("WIP limits remain active in the second phase", function (this: FlowLabWorld) {
+  assert.deepEqual(resultFor(this).config.projectPhases?.[1].settings.wipLimits, { Development: 5, Integration: 5, Test: 5 });
+});
+
+Then("the oldest unfinished Feature becomes the finishing focus on day {int}", function (this: FlowLabWorld, day: number) {
+  assert.equal(resultFor(this).snapshots[day].featureFocus?.id, "FEATURE-001");
+});
+
+Then("later Features are not admitted while that Feature remains unfinished", function (this: FlowLabWorld) {
+  const result = resultFor(this);
+  assert.equal(result.events.filter((event) => event.day >= 51 && event.type === "entered-stage" && event.stage === "Development" && result.items.find((item) => item.id === event.itemId)?.featureId !== "FEATURE-001").length, 0);
+});
+
+Given("I have configured a simulation with a custom workflow, rates, initial Features, and time-phased settings", function (this: FlowLabWorld) {
+  this.projectSeed = 42;
+  this.config = projectHeader(4, 2);
+  this.projectFile = { formatVersion: 1, name: "Saved project", seed: 42, config: this.config, phases: [] };
+  addProjectPhase(this, "baseline", "Baseline", 0, 1);
+  addProjectPhase(this, "wip", "WIP Limits", 2, 3, { wipLimits: { Development: 5, Integration: 5, Test: 5 } });
+});
+
+When("I save it as a project file", function (this: FlowLabWorld) {
+  assert.ok(this.config, "Expected a configured project");
+  this.projectFile = createProjectFile({ ...this.config, projectPhases: this.projectFile?.phases }, this.projectSeed ?? 42, "Saved project");
+});
+
+When("a colleague loads that project file", function (this: FlowLabWorld) {
+  loadProject(this);
+});
+
+Then("the colleague sees the saved workflow, initial backlog, horizon, seed, and phase timeline", function (this: FlowLabWorld) {
+  assert.equal(resultFor(this).config.horizonDays, 4);
+  assert.equal(resultFor(this).features.length, 2);
+  assert.equal(this.projectFile?.seed, 42);
+  assert.equal(resultFor(this).config.projectPhases?.length, 2);
+});
+
+Then("the same project file and seed produce identical daily snapshots and item histories", function (this: FlowLabWorld) {
+  assert.ok(this.config, "Expected a loaded project");
+  const repeated = runScenario(this.config, this.projectFile?.seed);
+  assert.deepEqual(repeated.snapshots, resultFor(this).snapshots);
+  assert.deepEqual(repeated.items.map((item) => item.history), resultFor(this).items.map((item) => item.history));
+});
+
+Given("I have loaded a project with more than one settings phase", function (this: FlowLabWorld) {
+  this.projectSeed = 42;
+  this.config = projectHeader(52, 1);
+  this.projectFile = { formatVersion: 1, name: "Readout", seed: 42, config: this.config, phases: [] };
+  addProjectPhase(this, "baseline", "Baseline", 0, 50);
+  addProjectPhase(this, "wip", "WIP Limits", 51, 51, { wipLimits: { Development: 5, Integration: 5, Test: 5 } });
+  loadProject(this);
+});
+
+When("I inspect day {int} and day {int} in the CFD or Kanban view", function (this: FlowLabWorld, firstDay: number, secondDay: number) {
+  assert.ok(resultFor(this).snapshots[firstDay] && resultFor(this).snapshots[secondDay]);
+});
+
+Then("the readout identifies the Baseline phase on day {int}", function (this: FlowLabWorld, day: number) {
+  assert.equal(resultFor(this).snapshots[day].projectPhase?.label, "Baseline");
+});
+
+Then("the readout identifies the WIP Limits phase on day {int}", function (this: FlowLabWorld, day: number) {
+  assert.equal(resultFor(this).snapshots[day].projectPhase?.label, "WIP Limits");
+});
+
+Then("the project timeline makes the phase boundary visible", function (this: FlowLabWorld) {
+  assert.equal(resultFor(this).config.projectPhases?.[1].startDay, 51);
+});
+
+Given("I am loading a project file for a {int}-day simulation", function (this: FlowLabWorld, horizon: number) {
+  this.projectFile = createProjectFile(projectHeader(horizon, 0), 42);
+  this.projectBeforeLoad = scenarios.baseline;
+});
+
+When("two settings phases overlap on day {int}", function (this: FlowLabWorld, overlapDay: number) {
+  assert.ok(this.projectFile, "Expected a project file");
+  this.projectFile.phases = [
+    { ...this.projectFile.phases[0], endDay: overlapDay },
+    { ...this.projectFile.phases[0], id: "overlap", label: "Overlap", startDay: overlapDay, endDay: this.projectFile.config.horizonDays - 1 },
+  ];
+  try { parseProjectFile(JSON.stringify(this.projectFile)); } catch (error) { this.projectError = error instanceof Error ? error.message : String(error); }
+});
+
+Then("I am told that project phases cannot overlap", function (this: FlowLabWorld) {
+  assert.equal(this.projectError, "Project phases cannot overlap.");
+});
+
+Then("the current simulation remains unchanged", function (this: FlowLabWorld) {
+  assert.equal(this.projectBeforeLoad, scenarios.baseline);
+});
+
+When("no phase covers day {int}", function (this: FlowLabWorld, uncoveredDay: number) {
+  assert.ok(this.projectFile, "Expected a project file");
+  this.projectFile = createProjectFile(projectHeader(121, 0), 42);
+  this.projectFile.phases = [
+    { ...this.projectFile.phases[0], endDay: uncoveredDay - 1 },
+    { ...this.projectFile.phases[0], id: "later", startDay: uncoveredDay + 1, endDay: 120 },
+  ];
+  try { parseProjectFile(JSON.stringify(this.projectFile)); } catch (error) { this.projectError = error instanceof Error ? error.message : String(error); }
+});
+
+Then("I am told that project phases must cover every simulation day exactly once", function (this: FlowLabWorld) {
+  assert.equal(this.projectError, "Project phases must cover every simulation day exactly once.");
+});
+
+Given("I am loading a project file with an initial feature count of {int}", function (this: FlowLabWorld, featureCount: number) {
+  this.projectFile = createProjectFile(projectHeader(121, featureCount), 42);
+  this.projectBeforeLoad = scenarios.baseline;
+});
+
+When("a phase beginning on day {int} attempts to change the initial feature count", function (this: FlowLabWorld, startDay: number) {
+  assert.ok(this.projectFile, "Expected a project file");
+  const source = this.projectFile.phases[0];
+  this.projectFile.phases = [
+    { ...source, id: "first", startDay: 0, endDay: startDay - 1 },
+    { ...source, id: "later", startDay, endDay: 120, settings: { ...source.settings, featureBacklog: { featureCount: 99 } } as unknown as ProjectPhase["settings"] },
+  ];
+  try { parseProjectFile(JSON.stringify(this.projectFile)); } catch (error) { this.projectError = error instanceof Error ? error.message : String(error); }
+});
+
+Then("I am told that initial backlog, workflow, horizon, and seed settings belong to the project header", function (this: FlowLabWorld) {
+  assert.equal(this.projectError, "Initial backlog, workflow, horizon, and seed settings belong to the project header.");
+});
+
+Given("I have an open simulation", function (this: FlowLabWorld) {
+  this.projectBeforeLoad = scenarios.baseline;
+});
+
+When("I load a project file with an unsupported format version", function (this: FlowLabWorld) {
+  const file = createProjectFile(projectHeader(2, 0), 42);
+  file.formatVersion = 999;
+  try { parseProjectFile(JSON.stringify(file)); } catch (error) { this.projectError = error instanceof Error ? error.message : String(error); }
+});
+
+Then("I am told that the project-file version is not supported", function (this: FlowLabWorld) {
+  assert.equal(this.projectError, "The project-file version is not supported.");
+});
+
+Then("the open simulation remains unchanged", function (this: FlowLabWorld) {
+  assert.equal(this.projectBeforeLoad, scenarios.baseline);
 });

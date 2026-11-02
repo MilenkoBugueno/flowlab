@@ -1,4 +1,5 @@
 import { between, createSeededRandom, deriveSeed, poisson } from "./random";
+import { configForProjectDay } from "./project";
 import type {
   ActiveStage,
   CapacityAssistance,
@@ -124,7 +125,7 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
     const initialStageIndex = stages.indexOf(initialStage);
     const plannedStages = active.filter((stage) => stages.indexOf(stage) >= initialStageIndex);
     const plannedEffort = Object.fromEntries(plannedStages.map((stage) => {
-      const range = config.serviceEffort[stage] ?? { min: 0.75, max: 1.25 };
+      const range = configForProjectDay(config, day).config.serviceEffort[stage] ?? { min: 0.75, max: 1.25 };
       return [stage, options.plannedEffortOverrides?.[stage] ?? between(range.min, range.max, effortRandom)];
     }));
     const totalEffort = Object.values(plannedEffort).reduce((total, effort) => total + effort, 0);
@@ -190,14 +191,14 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
     const feature = featureFor(item);
     return !feature || feature.pbiIds.every((pbiId) => items.find((candidate) => candidate.id === pbiId)?.developedAt !== undefined);
   };
-  const completionFocusFor = (day: number): Feature | undefined => {
-    if (!config.featureFocus || day < config.featureFocus.startDay) return undefined;
+  const completionFocusFor = (day: number, dayConfig: ScenarioConfig): Feature | undefined => {
+    if (!dayConfig.featureFocus || day < dayConfig.featureFocus.startDay) return undefined;
     return features.find((feature) => feature.completedAt === undefined);
   };
   const isFocused = (item: WorkItem, focus: Feature | undefined): boolean => !focus || item.featureId === focus.id;
 
-  const canEnter = (target: Stage): boolean => {
-    const wipLimit = config.wipLimits?.[target];
+  const canEnter = (target: Stage, dayConfig: ScenarioConfig): boolean => {
+    const wipLimit = dayConfig.wipLimits?.[target];
     if (wipLimit === undefined) return true;
     const countedItems = items.filter((item) => {
       const isDependencyGatedDevelopment = target === developmentStage
@@ -232,7 +233,7 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
     recordMovement(day, "External", entryStage);
   };
 
-  const moveBlocked = (day: number, from: ActiveStage, focus: Feature | undefined) => {
+  const moveBlocked = (day: number, from: ActiveStage, focus: Feature | undefined, dayConfig: ScenarioConfig) => {
     const target = nextStage(from, stages);
     const candidates = items
       .filter((item) => item.stage === from && item.status === "blocked")
@@ -241,11 +242,11 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
       if (!isFocused(item, focus)) continue;
       if (target === testStage && item.type === "PBI" && !featureTestGateOpen(item)) continue;
       if (target === exitStage) complete(day, item, from);
-      else if (canEnter(target)) enter(day, item, target);
+      else if (canEnter(target, dayConfig)) enter(day, item, target);
     }
   };
 
-  const pullHandoffWork = (day: number, from: Stage, focus: Feature | undefined) => {
+  const pullHandoffWork = (day: number, from: Stage, focus: Feature | undefined, dayConfig: ScenarioConfig) => {
     const target = nextStage(from, stages);
     const candidates = items
       .filter((item) => item.stage === from && item.status === "waiting")
@@ -254,21 +255,21 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
       if (!isFocused(item, focus)) continue;
       if (target === testStage && item.type === "PBI" && !featureTestGateOpen(item)) continue;
       if (target === exitStage) complete(day, item, from);
-      else if (canEnter(target)) enter(day, item, target);
+      else if (canEnter(target, dayConfig)) enter(day, item, target);
     }
   };
 
-  const admitBacklogWork = (day: number, pushAllowance: number, focus: Feature | undefined) => {
+  const admitBacklogWork = (day: number, pushAllowance: number, focus: Feature | undefined, dayConfig: ScenarioConfig) => {
     const entryItems = items
       .filter((item) => item.stage === entryStage && isFocused(item, focus))
       .sort((a, b) => a.arrivedAt - b.arrivedAt);
     const firstActive = active[0];
-    const pullBased = firstActive !== undefined && config.wipLimits?.[firstActive] !== undefined;
+    const pullBased = firstActive !== undefined && dayConfig.wipLimits?.[firstActive] !== undefined;
     let remainingAdmissions = pullBased ? Number.POSITIVE_INFINITY : pushAllowance;
     for (const item of entryItems) {
       if (remainingAdmissions <= 0) break;
       if (!firstActive) complete(day, item, entryStage);
-      else if (canEnter(firstActive)) {
+      else if (canEnter(firstActive, dayConfig)) {
         enter(day, item, firstActive);
         remainingAdmissions -= 1;
       }
@@ -371,15 +372,17 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
   }
 
   for (let day = 0; day < config.horizonDays; day += 1) {
-    const featureFocus = completionFocusFor(day);
+    const { config: dayConfig, phase } = configForProjectDay(config, day);
+    const featureFocus = completionFocusFor(day, dayConfig);
     dailyLog.push({
       day,
       seed,
       movements: emptyMovements(stages),
       featureFocus: featureFocus && { id: featureFocus.id, title: featureFocus.title },
+      projectPhase: phase && { id: phase.id, label: phase.label },
     });
     feedbackArrivals = 0;
-    const pushAllowance = poisson(config.arrivalRatePerDay, demandRandom) + (config.batchDays.includes(day) ? config.batchSize : 0);
+    const pushAllowance = poisson(dayConfig.arrivalRatePerDay, demandRandom) + (config.batchDays.includes(day) ? config.batchSize : 0);
 
     if (featureFocus) {
       for (const item of items) {
@@ -393,18 +396,18 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
     // Stable daily event order: completed work moves, policies are implicit in rates,
     // admissions/pulls happen, then available stages begin work.
     [...stages.slice(1, -1)].reverse().forEach((stage) => {
-      if (handoffs.has(stage)) pullHandoffWork(day, stage, featureFocus);
-      else if (active.includes(stage)) moveBlocked(day, stage, featureFocus);
+      if (handoffs.has(stage)) pullHandoffWork(day, stage, featureFocus, dayConfig);
+      else if (active.includes(stage)) moveBlocked(day, stage, featureFocus, dayConfig);
     });
-    admitBacklogWork(day, pushAllowance, featureFocus);
+    admitBacklogWork(day, pushAllowance, featureFocus, dayConfig);
     active.forEach((stage) => {
-      const maximumConcurrency = config.operatingAssumptions?.[stage]?.maximumConcurrency ?? 16;
+      const maximumConcurrency = dayConfig.operatingAssumptions?.[stage]?.maximumConcurrency ?? 16;
       activateWork(day, stage, maximumConcurrency, featureFocus);
     });
     const operatingCapacity = active.map((stage) => {
-      const baseCapacity = processingRateFor(stage, day, config);
+      const baseCapacity = processingRateFor(stage, day, dayConfig);
       const concurrentItems = concurrentItemCount(items, stage);
-      const assumptions = config.operatingAssumptions?.[stage] ?? { focusWip: 5, maximumConcurrency: 16, taskSwitchingLossRatio: 0.2 };
+      const assumptions = dayConfig.operatingAssumptions?.[stage] ?? { focusWip: 5, maximumConcurrency: 16, taskSwitchingLossRatio: 0.2 };
       const { effectiveCapacity, taskSwitchingLoss } = effectiveCapacityFor(baseCapacity, concurrentItems, assumptions);
       return { stage, concurrentItems, baseCapacity, effectiveCapacity, taskSwitchingLoss };
     });
@@ -440,9 +443,9 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
         }
       }
     }
-    const effectiveness = config.wipAssistanceEffectiveness ?? 0.75;
+    const effectiveness = dayConfig.wipAssistanceEffectiveness ?? 0.75;
     for (const sourceStage of active) {
-      if (config.wipLimits?.[sourceStage] === undefined || unusedCapacity[sourceStage] <= 0) continue;
+      if (dayConfig.wipLimits?.[sourceStage] === undefined || unusedCapacity[sourceStage] <= 0) continue;
       const targetStage = nextActiveStage(sourceStage, config.workflow);
       if (!targetStage) continue;
       const offeredCapacity = unusedCapacity[sourceStage] * effectiveness;
@@ -474,6 +477,7 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
       capacityAssistance,
       operatingCapacity,
       featureFocus: featureFocus && { id: featureFocus.id, title: featureFocus.title },
+      projectPhase: phase && { id: phase.id, label: phase.label },
     });
   }
 

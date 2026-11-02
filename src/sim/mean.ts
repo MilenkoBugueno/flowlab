@@ -60,6 +60,7 @@ export function runMeanScenario(config: ScenarioConfig, seedCount: number, first
       arrivals: mean(dailyRuns.map((snapshot) => snapshot.arrivals)),
       completions: mean(dailyRuns.map((snapshot) => snapshot.completions)),
       externalBacklog: mean(dailyRuns.map((snapshot) => snapshot.externalBacklog)),
+      projectPhase: dailyRuns[0].projectPhase,
     };
   });
   return { config, seeds, runs, snapshots, metrics: meanMetrics(runs) };

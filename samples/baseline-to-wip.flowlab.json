@@ -1,0 +1,79 @@
+{
+  "formatVersion": 1,
+  "name": "Baseline to WIP Limits",
+  "seed": 42,
+  "config": {
+    "id": "baseline",
+    "label": "Baseline",
+    "summary": "A project that introduces WIP limits after an initial baseline period.",
+    "workflow": {
+      "stages": ["Backlog", "Development", "Integration", "Test", "Done"],
+      "handoffStages": ["Integration"]
+    },
+    "horizonDays": 121,
+    "warmupDays": 20,
+    "arrivalRatePerDay": 1.6,
+    "initialBacklog": { "pbiCount": 0, "bugCount": 0 },
+    "initialInventory": {},
+    "featureBacklog": {
+      "featureCount": 10,
+      "minPbisPerFeature": 5,
+      "maxPbisPerFeature": 10,
+      "baseBugEffort": 1,
+      "feedbackDelayEffortFactor": 0.1
+    },
+    "batchDays": [],
+    "batchSize": 0,
+    "baseRates": { "Development": 1.4, "Test": 0.7 },
+    "serviceEffort": {
+      "Development": { "min": 0.75, "max": 1.35 },
+      "Test": { "min": 0.65, "max": 1.2 }
+    },
+    "operatingAssumptions": {
+      "Development": { "focusWip": 5, "maximumConcurrency": 16, "taskSwitchingLossRatio": 0.2 },
+      "Test": { "focusWip": 5, "maximumConcurrency": 16, "taskSwitchingLossRatio": 0.2 }
+    },
+    "wipAssistanceEffectiveness": 0.75
+  },
+  "phases": [
+    {
+      "id": "baseline",
+      "label": "Baseline",
+      "startDay": 0,
+      "endDay": 50,
+      "settings": {
+        "arrivalRatePerDay": 1.6,
+        "baseRates": { "Development": 1.4, "Test": 0.7 },
+        "serviceEffort": {
+          "Development": { "min": 0.75, "max": 1.35 },
+          "Test": { "min": 0.65, "max": 1.2 }
+        },
+        "operatingAssumptions": {
+          "Development": { "focusWip": 5, "maximumConcurrency": 16, "taskSwitchingLossRatio": 0.2 },
+          "Test": { "focusWip": 5, "maximumConcurrency": 16, "taskSwitchingLossRatio": 0.2 }
+        },
+        "wipAssistanceEffectiveness": 0.75
+      }
+    },
+    {
+      "id": "wip-limits",
+      "label": "WIP Limits",
+      "startDay": 51,
+      "endDay": 120,
+      "settings": {
+        "arrivalRatePerDay": 1.6,
+        "baseRates": { "Development": 1.4, "Test": 0.7 },
+        "serviceEffort": {
+          "Development": { "min": 0.75, "max": 1.35 },
+          "Test": { "min": 0.65, "max": 1.2 }
+        },
+        "operatingAssumptions": {
+          "Development": { "focusWip": 5, "maximumConcurrency": 16, "taskSwitchingLossRatio": 0.2 },
+          "Test": { "focusWip": 5, "maximumConcurrency": 16, "taskSwitchingLossRatio": 0.2 }
+        },
+        "wipLimits": { "Development": 5, "Integration": 5, "Test": 5 },
+        "wipAssistanceEffectiveness": 0.75
+      }
+    }
+  ]
+}

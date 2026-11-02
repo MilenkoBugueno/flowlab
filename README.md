@@ -33,6 +33,14 @@ The simulator includes Baseline, Start Finishing - Stop Starting, WIP Limits,
 and WIP Limits + Start Finishing presets. It is a learning model, not a
 calibrated prediction of a specific organization.
 
+Load [`samples/baseline-to-wip.flowlab.json`](samples/baseline-to-wip.flowlab.json)
+from the **Project file** panel to try a 10-Feature project that changes from
+Baseline to WIP Limits on day 51.
+
+In a project file, `config.featureBacklog` controls the initial Feature count.
+Each `phases[].settings` object controls the runtime behavior for its day
+range; phase settings take precedence over the same fields in `config`.
+
 ## Tabletop Pilot
 
 FlowLab ist ein moderiertes Tabletop-Lernspiel, mit dem Produktentwickler lernen,
