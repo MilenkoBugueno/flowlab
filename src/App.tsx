@@ -20,7 +20,7 @@ const metricLabels: Array<[keyof Metrics, string, string]> = [
 ];
 
 const defaultFeatureBacklog: FeatureBacklogConfig = {
-  featureCount: 20,
+  featureCount: 10,
   minPbisPerFeature: 5,
   maxPbisPerFeature: 10,
   baseBugEffort: 1,
