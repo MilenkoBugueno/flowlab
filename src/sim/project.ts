@@ -1,5 +1,6 @@
 import { withSimulationSettings } from "./settings";
-import type { PhaseSettings, ProjectPhase, ScenarioConfig } from "./types";
+import { scenarios } from "./scenarios";
+import type { PhaseSettings, ProjectPhase, ScenarioConfig, ScenarioId } from "./types";
 import { withWorkflow } from "./workflow";
 
 export const PROJECT_FILE_VERSION = 1;
@@ -10,6 +11,15 @@ export interface ProjectFile {
   seed: number;
   config: ScenarioConfig;
   phases: ProjectPhase[];
+}
+
+/** Editable GUI representation of a project phase. */
+export interface PhasePlanEntry {
+  id: string;
+  scenarioId: ScenarioId;
+  durationDays: number;
+  /** Retains custom imported phase values until the profile is explicitly changed. */
+  settings?: PhaseSettings;
 }
 
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
@@ -26,6 +36,59 @@ export function phaseSettingsFor(config: ScenarioConfig): PhaseSettings {
     swarm: config.swarm && clone(config.swarm),
     featureFocus: config.featureFocus && clone(config.featureFocus),
   };
+}
+
+export function projectPhasesForPlan(header: ScenarioConfig, plan: PhasePlanEntry[]): ProjectPhase[] {
+  if (!plan.length) throw new Error("A phase plan needs at least one phase.");
+  let startDay = 0;
+  return plan.map((entry) => {
+    if (!Number.isInteger(entry.durationDays) || entry.durationDays <= 0) {
+      throw new Error("A phase duration must be a positive whole number.");
+    }
+    const profile = scenarios[entry.scenarioId];
+    const settings = entry.settings ?? phaseSettingsFor(configForPhaseProfile(header, entry.scenarioId));
+    const phase: ProjectPhase = {
+      id: entry.id,
+      label: profile.label,
+      startDay,
+      endDay: startDay + entry.durationDays - 1,
+      settings: clone(settings),
+    };
+    startDay = phase.endDay + 1;
+    return phase;
+  });
+}
+
+/**
+ * Phase profiles are interventions, not a replacement for the global model.
+ * This retains the workflow, rates, capacities, and initial settings edited in
+ * the cockpit while applying the selected WIP/focus behaviour to the phase.
+ */
+function configForPhaseProfile(header: ScenarioConfig, scenarioId: ScenarioId): ScenarioConfig {
+  const usesWipLimits = scenarioId === "wip" || scenarioId === "combined";
+  const usesFinishingFocus = scenarioId === "swarm" || scenarioId === "combined";
+  const defaultWipLimits = Object.fromEntries(
+    header.workflow.stages.slice(1, -1).map((stage) => [stage, 5]),
+  );
+  return {
+    ...header,
+    wipLimits: usesWipLimits ? header.wipLimits ?? defaultWipLimits : undefined,
+    featureFocus: usesFinishingFocus ? { startDay: 0 } : undefined,
+    incident: undefined,
+    swarm: undefined,
+  };
+}
+
+export function phasePlanFromProject(project: ProjectFile): PhasePlanEntry[] {
+  return project.phases.map((phase) => {
+    const profile = (Object.values(scenarios).find((scenario) => scenario.label === phase.label)?.id ?? "baseline") as ScenarioId;
+    return {
+      id: phase.id,
+      scenarioId: profile,
+      durationDays: phase.endDay - phase.startDay + 1,
+      settings: clone(phase.settings),
+    };
+  });
 }
 
 export function configForProjectDay(config: ScenarioConfig, day: number): { config: ScenarioConfig; phase?: ProjectPhase } {

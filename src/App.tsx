@@ -4,10 +4,11 @@ import { DailyLog } from "./DailyLog";
 import { KanbanBoard } from "./KanbanBoard";
 import { runScenario } from "./sim/engine";
 import { runMeanScenario, validateMeanSeedCount } from "./sim/mean";
-import { configFromProjectFile, createProjectFile, parseProjectFile } from "./sim/project";
+import { configFromProjectFile, createProjectFile, parseProjectFile, phasePlanFromProject, projectPhasesForPlan } from "./sim/project";
+import type { PhasePlanEntry } from "./sim/project";
 import { scenarioList, scenarios } from "./sim/scenarios";
 import { withSimulationSettings } from "./sim/settings";
-import type { CapacityIncident, FeatureBacklogConfig, FeatureFocusPolicy, InitialInventory, Metrics, OperatingAssumptions, ProjectPhase, ScenarioConfig, ScenarioId, SwarmPolicy } from "./sim/types";
+import type { CapacityIncident, FeatureBacklogConfig, FeatureFocusPolicy, InitialInventory, Metrics, OperatingAssumptions, ScenarioConfig, ScenarioId, SwarmPolicy } from "./sim/types";
 import { activeStages, withWorkflow } from "./sim/workflow";
 
 const metricLabels: Array<[keyof Metrics, string, string]> = [
@@ -71,7 +72,8 @@ export default function App() {
   const [swarmDraft, setSwarmDraft] = useState<SwarmPolicy>();
   const [interventionError, setInterventionError] = useState<string>();
   const [projectName, setProjectName] = useState("FlowLab project");
-  const [projectPhases, setProjectPhases] = useState<ProjectPhase[]>();
+  const [phasePlan, setPhasePlan] = useState<PhasePlanEntry[]>([{ id: "phase-1", scenarioId: "baseline", durationDays: scenarios.baseline.horizonDays }]);
+  const [phasePlanError, setPhasePlanError] = useState<string>();
   const [projectHeaderOverrides, setProjectHeaderOverrides] = useState<Partial<ScenarioConfig>>({});
   const [projectFileError, setProjectFileError] = useState<string>();
   const projectFileInput = useRef<HTMLInputElement>(null);
@@ -85,13 +87,18 @@ export default function App() {
     () => withSimulationSettings(workflowConfig, { arrivalRatePerDay: savedArrivalRate, initialInventory: inventoryForStages(savedInitialInventory, workflowConfig.workflow.stages), featureBacklog: savedFeatureBacklog, featureFocus: savedFeatureFocus, wipAssistanceEffectiveness: savedWipAssistanceEffectiveness, baseRates: savedRates, operatingAssumptions: savedOperatingAssumptions, incident: savedIncident, swarm: savedSwarm }),
     [workflowConfig, savedArrivalRate, savedInitialInventory, savedFeatureBacklog, savedFeatureFocus, savedWipAssistanceEffectiveness, savedRates, savedOperatingAssumptions, savedIncident, savedSwarm],
   );
+  const phasePlanHorizon = phasePlan.reduce((total, phase) => total + phase.durationDays, 0);
+  const projectPhases = useMemo(
+    () => projectPhasesForPlan({ ...customizedConfig, horizonDays: phasePlanHorizon }, phasePlan),
+    [customizedConfig, phasePlan, phasePlanHorizon],
+  );
   const selectedConfig = useMemo(
-    () => projectPhases ? { ...customizedConfig, projectPhases } : customizedConfig,
-    [customizedConfig, projectPhases],
+    () => ({ ...customizedConfig, horizonDays: phasePlanHorizon, projectPhases }),
+    [customizedConfig, phasePlanHorizon, projectPhases],
   );
   const baselineConfig = useMemo(
-    () => withSimulationSettings(scenarios.baseline, { arrivalRatePerDay: savedArrivalRate, initialInventory: inventoryForStages(savedInitialInventory, scenarios.baseline.workflow.stages), featureBacklog: savedFeatureBacklog, wipAssistanceEffectiveness: savedWipAssistanceEffectiveness, operatingAssumptions: savedOperatingAssumptions }),
-    [savedArrivalRate, savedInitialInventory, savedFeatureBacklog, savedWipAssistanceEffectiveness, savedOperatingAssumptions],
+    () => withSimulationSettings({ ...scenarios.baseline, horizonDays: phasePlanHorizon }, { arrivalRatePerDay: savedArrivalRate, initialInventory: inventoryForStages(savedInitialInventory, scenarios.baseline.workflow.stages), featureBacklog: savedFeatureBacklog, wipAssistanceEffectiveness: savedWipAssistanceEffectiveness, operatingAssumptions: savedOperatingAssumptions }),
+    [savedArrivalRate, savedInitialInventory, savedFeatureBacklog, savedWipAssistanceEffectiveness, savedOperatingAssumptions, phasePlanHorizon],
   );
   const baseline = useMemo(
     () => meanSeedCount === 1 ? runScenario(baselineConfig, seed) : runMeanScenario(baselineConfig, meanSeedCount, seed),
@@ -102,8 +109,9 @@ export default function App() {
     [selectedConfig, seed, meanSeedCount, runKey],
   );
   const [selectedDay, setSelectedDay] = useState(50);
+  const visibleSelectedDay = Math.min(selectedDay, selectedConfig.horizonDays - 1);
   const [visualization, setVisualization] = useState<"cfd" | "kanban">("cfd");
-  const [showInactiveWork, setShowInactiveWork] = useState(true);
+  const [showInactiveWork, setShowInactiveWork] = useState(false);
   const [showFeatureCompletions, setShowFeatureCompletions] = useState(false);
   const scenario = scenarios[scenarioId];
   const activeWorkflowStages = activeStages(workflowConfig.workflow);
@@ -126,8 +134,9 @@ export default function App() {
 
   const updateScenario = (id: ScenarioId) => {
     setScenarioId(id);
-    setProjectPhases(undefined);
     setProjectHeaderOverrides({});
+    setPhasePlan([{ id: "phase-1", scenarioId: id, durationDays: scenarios[id].horizonDays }]);
+    setPhasePlanError(undefined);
     setSavedFeatureFocus(undefined);
     setFeatureFocusEnabled(scenarios[id].featureFocus !== undefined);
     setFeatureFocusStartDay(String(scenarios[id].featureFocus?.startDay ?? 0));
@@ -184,7 +193,8 @@ export default function App() {
       setSavedFeatureFocus(config.featureFocus ?? null);
       setFeatureFocusEnabled(config.featureFocus !== undefined);
       setFeatureFocusStartDay(String(config.featureFocus?.startDay ?? 0));
-      setProjectPhases(config.projectPhases);
+      setPhasePlan(phasePlanFromProject(project));
+      setPhasePlanError(undefined);
       setSelectedDay(0);
       setProjectFileError(undefined);
       setRunKey((value) => value + 1);
@@ -193,6 +203,43 @@ export default function App() {
     } finally {
       if (projectFileInput.current) projectFileInput.current.value = "";
     }
+  };
+
+  const updatePhaseDuration = (id: string, value: string) => {
+    const durationDays = Number(value);
+    if (!Number.isInteger(durationDays) || durationDays <= 0) {
+      setPhasePlanError("A phase duration must be a positive whole number.");
+      return;
+    }
+    setPhasePlan((plan) => plan.map((phase) => phase.id === id ? { ...phase, durationDays } : phase));
+    setPhasePlanError(undefined);
+  };
+
+  const updatePhaseProfile = (id: string, scenarioId: ScenarioId) => {
+    setPhasePlan((plan) => plan.map((phase) => phase.id === id ? { ...phase, scenarioId, settings: undefined } : phase));
+    setPhasePlanError(undefined);
+  };
+
+  const movePhase = (id: string, direction: -1 | 1) => {
+    setPhasePlan((plan) => {
+      const index = plan.findIndex((phase) => phase.id === id);
+      const target = index + direction;
+      if (index < 0 || target < 0 || target >= plan.length) return plan;
+      const next = [...plan];
+      [next[index], next[target]] = [next[target], next[index]];
+      return next;
+    });
+  };
+
+  const removePhase = (id: string) => {
+    if (phasePlan.length === 1) return;
+    setPhasePlan((plan) => plan.filter((phase) => phase.id !== id));
+    setPhasePlanError(undefined);
+  };
+
+  const addPhase = () => {
+    setPhasePlan((plan) => [...plan, { id: `phase-${Date.now()}`, scenarioId: "baseline", durationDays: 20 }]);
+    setPhasePlanError(undefined);
   };
 
   const saveWorkflow = () => {
@@ -345,9 +392,34 @@ export default function App() {
               <button type="button" onClick={saveProjectFile}>Save file</button>
             </div>
             <input ref={projectFileInput} className="visually-hidden" type="file" accept="application/json,.json" onChange={(event) => void loadProjectFile(event.target.files?.[0])} />
-            {projectPhases && <div className="project-phase-list" aria-label="Project settings timeline">
+            <div className="phase-plan-editor" aria-labelledby="phase-plan-heading">
+              <h3 id="phase-plan-heading">Phase plan</h3>
+              <p>Each duration is in working days. The plan determines when the simulation stops.</p>
+              {phasePlan.map((phase, index) => {
+                const startDay = phasePlan.slice(0, index).reduce((total, entry) => total + entry.durationDays, 0);
+                const endDay = startDay + phase.durationDays - 1;
+                return <fieldset key={phase.id}>
+                  <legend>Days {startDay}–{endDay}</legend>
+                  <label>Intervention
+                    <select value={phase.scenarioId} onChange={(event) => updatePhaseProfile(phase.id, event.target.value as ScenarioId)}>
+                      {scenarioList.map((entry) => <option key={entry.id} value={entry.id}>{entry.label}</option>)}
+                    </select>
+                  </label>
+                  <label>Days<input type="number" min="1" step="1" value={phase.durationDays} onChange={(event) => updatePhaseDuration(phase.id, event.target.value)} /></label>
+                  <div className="phase-plan-actions">
+                    <button type="button" disabled={index === 0} onClick={() => movePhase(phase.id, -1)}>↑</button>
+                    <button type="button" disabled={index === phasePlan.length - 1} onClick={() => movePhase(phase.id, 1)}>↓</button>
+                    <button type="button" disabled={phasePlan.length === 1} onClick={() => removePhase(phase.id)}>Remove</button>
+                  </div>
+                </fieldset>;
+              })}
+              <button type="button" onClick={addPhase}>Add phase</button>
+              <small>Simulation horizon: {phasePlanHorizon} working days.</small>
+              {phasePlanError && <p className="settings-error" role="alert">{phasePlanError}</p>}
+            </div>
+            <div className="project-phase-list" aria-label="Project settings timeline">
               {projectPhases.map((phase) => <p key={phase.id}><strong>Day {phase.startDay}–{phase.endDay}</strong> {phase.label}</p>)}
-            </div>}
+            </div>
             {projectFileError && <p className="settings-error" role="alert">{projectFileError}</p>}
           </section>
 
@@ -493,9 +565,9 @@ export default function App() {
             <button type="button" role="tab" aria-selected={visualization === "kanban"} className={visualization === "kanban" ? "active" : ""} onClick={() => setVisualization("kanban")}>Kanban</button>
           </div>
           {visualization === "cfd" ? (
-            <CfdChart result={selected} selectedDay={selectedDay} onSelectDay={setSelectedDay} showInactiveWork={showInactiveWork} onShowInactiveWorkChange={setShowInactiveWork} showFeatureCompletions={showFeatureCompletions} onShowFeatureCompletionsChange={setShowFeatureCompletions} />
+            <CfdChart result={selected} selectedDay={visibleSelectedDay} onSelectDay={setSelectedDay} showInactiveWork={showInactiveWork} onShowInactiveWorkChange={setShowInactiveWork} showFeatureCompletions={showFeatureCompletions} onShowFeatureCompletionsChange={setShowFeatureCompletions} />
           ) : "dailyLog" in selected ? (
-            <KanbanBoard result={selected} selectedDay={selectedDay} onSelectDay={setSelectedDay} />
+            <KanbanBoard result={selected} selectedDay={visibleSelectedDay} onSelectDay={setSelectedDay} />
           ) : (
             <section className="kanban-empty"><p className="eyebrow">Item trace</p><h2>Kanban board</h2><p>Run one seed to inspect individual items. A mean CFD has no single set of cards.</p></section>
           )}

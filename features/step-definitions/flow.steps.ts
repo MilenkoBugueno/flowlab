@@ -2,11 +2,11 @@ import assert from "node:assert/strict";
 import { Given, Then, When, World, setWorldConstructor } from "@cucumber/cucumber";
 import { effectiveCapacityFor, feedbackBugEffortFor, processingRateFor, runScenario } from "../../src/sim/engine";
 import { runMeanScenario, validateMeanSeedCount } from "../../src/sim/mean";
-import { configFromProjectFile, createProjectFile, parseProjectFile, phaseSettingsFor } from "../../src/sim/project";
-import type { ProjectFile } from "../../src/sim/project";
+import { configFromProjectFile, createProjectFile, parseProjectFile, phasePlanFromProject, phaseSettingsFor, projectPhasesForPlan } from "../../src/sim/project";
+import type { PhasePlanEntry, ProjectFile } from "../../src/sim/project";
 import { scenarios } from "../../src/sim/scenarios";
 import { validateOperatingAssumptions, withOperatingAssumptions, withProcessingRates, withSimulationSettings } from "../../src/sim/settings";
-import type { CapacityIncident, FeatureBacklogConfig, InitialBacklog, InitialInventory, ItemTimelineState, MeanSimulationResult, OperatingAssumptions, ProjectPhase, ScenarioConfig, SimulationResult, SwarmPolicy, WorkItem } from "../../src/sim/types";
+import type { CapacityIncident, FeatureBacklogConfig, InitialBacklog, InitialInventory, ItemTimelineState, MeanSimulationResult, OperatingAssumptions, ProjectPhase, ScenarioConfig, ScenarioId, SimulationResult, SwarmPolicy, WorkItem } from "../../src/sim/types";
 import { activeStages, withWorkflow } from "../../src/sim/workflow";
 
 class FlowLabWorld extends World {
@@ -53,6 +53,9 @@ class FlowLabWorld extends World {
   projectError?: string;
   projectBeforeLoad?: ScenarioConfig;
   projectSeed?: number;
+  phasePlan?: PhasePlanEntry[];
+  phasePlanBeforeEdit?: PhasePlanEntry[];
+  phasePlanError?: string;
 }
 
 setWorldConstructor(FlowLabWorld);
@@ -2064,7 +2067,11 @@ When("I load the project file", function (this: FlowLabWorld) {
 });
 
 Then("the simulation horizon is {int} working days", function (this: FlowLabWorld, horizon: number) {
-  assert.equal(resultFor(this).snapshots.length, horizon);
+  if (this.result) {
+    assert.equal(resultFor(this).snapshots.length, horizon);
+    return;
+  }
+  assert.equal((this.phasePlan ?? []).reduce((total, phase) => total + phase.durationDays, 0), horizon);
 });
 
 Then("exactly {int} Features are created before day 0", function (this: FlowLabWorld, count: number) {
@@ -2282,4 +2289,197 @@ Then("I am told that the project-file version is not supported", function (this:
 
 Then("the open simulation remains unchanged", function (this: FlowLabWorld) {
   assert.equal(this.projectBeforeLoad, scenarios.baseline);
+});
+
+function scenarioIdForPhaseLabel(label: string): ScenarioId {
+  const scenario = Object.values(scenarios).find((candidate) => candidate.label === label);
+  assert.ok(scenario, `Unknown intervention profile: ${label}`);
+  return scenario.id;
+}
+
+function configurePhasePlan(world: FlowLabWorld, overrides: Partial<ScenarioConfig> = {}): ScenarioConfig {
+  assert.ok(world.phasePlan?.length, "Expected at least one planned phase");
+  const horizonDays = world.phasePlan.reduce((total, phase) => total + phase.durationDays, 0);
+  const header = projectHeader(horizonDays, 0, { arrivalRatePerDay: 1, ...overrides });
+  world.config = {
+    ...header,
+    projectPhases: projectPhasesForPlan(header, world.phasePlan),
+  };
+  return world.config;
+}
+
+function phaseAt(world: FlowLabWorld, label: string) {
+  const phase = configurePhasePlan(world).projectPhases?.find((candidate) => candidate.label === label);
+  assert.ok(phase, `Expected a ${label} phase`);
+  return phase;
+}
+
+Given("I am editing the phase plan", function (this: FlowLabWorld) {
+  this.phasePlan = [];
+  this.phasePlanError = undefined;
+});
+
+When(/^I add a (.+) phase lasting (\d+) working days$/, function (this: FlowLabWorld, label: string, duration: string) {
+  const plan = this.phasePlan ?? [];
+  plan.push({ id: `phase-${plan.length + 1}`, scenarioId: scenarioIdForPhaseLabel(label), durationDays: Number(duration) });
+  this.phasePlan = plan;
+  configurePhasePlan(this);
+});
+
+Then(/^the phase plan shows (.+) on days (\d+) through (\d+)$/, function (this: FlowLabWorld, label: string, startDay: string, endDay: string) {
+  const phase = phaseAt(this, label);
+  assert.equal(phase.startDay, Number(startDay));
+  assert.equal(phase.endDay, Number(endDay));
+});
+
+Given("a phase plan with Baseline for {int} working days and WIP Limits for {int} working days", function (this: FlowLabWorld, baselineDays: number, wipDays: number) {
+  this.phasePlan = [
+    { id: "phase-1", scenarioId: "baseline", durationDays: baselineDays },
+    { id: "phase-2", scenarioId: "wip", durationDays: wipDays },
+  ];
+  configurePhasePlan(this);
+});
+
+Then("the new phase starts on day {int} and ends on day {int}", function (this: FlowLabWorld, startDay: number, endDay: number) {
+  const phase = configurePhasePlan(this).projectPhases?.at(-1);
+  assert.equal(phase?.startDay, startDay);
+  assert.equal(phase?.endDay, endDay);
+});
+
+Then("the simulation horizon becomes {int} working days", function (this: FlowLabWorld, horizon: number) {
+  assert.equal((this.phasePlan ?? []).reduce((total, phase) => total + phase.durationDays, 0), horizon);
+});
+
+Then("the simulation horizon remains {int} working days", function (this: FlowLabWorld, horizon: number) {
+  assert.equal((this.phasePlan ?? []).reduce((total, phase) => total + phase.durationDays, 0), horizon);
+});
+
+Then("the CFD shows phase boundaries on days {int} and {int}", function (this: FlowLabWorld, firstDay: number, secondDay: number) {
+  const starts = configurePhasePlan(this).projectPhases?.slice(1).map((phase) => phase.startDay);
+  assert.deepEqual(starts, [firstDay, secondDay]);
+});
+
+Then("WIP limits apply on days {int} through {int}", function (this: FlowLabWorld, startDay: number, endDay: number) {
+  const result = resultFor(this);
+  for (let day = startDay; day <= endDay; day += 1) assert.equal(result.snapshots[day].projectPhase?.label, "WIP Limits");
+  assert.ok(result.config.projectPhases?.find((phase) => phase.label === "WIP Limits")?.settings.wipLimits);
+});
+
+Then("the simulation has no snapshots after day {int}", function (this: FlowLabWorld, day: number) {
+  assert.equal(resultFor(this).snapshots[day + 1], undefined);
+});
+
+Given("a phase plan with a Baseline phase followed by WIP Limits", function (this: FlowLabWorld) {
+  this.phasePlan = [
+    { id: "phase-1", scenarioId: "baseline", durationDays: 20 },
+    { id: "phase-2", scenarioId: "wip", durationDays: 20 },
+  ];
+  configurePhasePlan(this);
+});
+
+Given("work is present in Development when the WIP Limits phase begins", function (this: FlowLabWorld) {
+  configurePhasePlan(this, {
+    arrivalRatePerDay: 2,
+    initialInventory: { Development: { pbiCount: 8, bugCount: 0 } },
+    baseRates: { Development: 0.01, Test: 0.01 },
+    serviceEffort: { Development: { min: 100, max: 100 }, Test: { min: 100, max: 100 } },
+  });
+});
+
+When("I inspect the first day of the WIP Limits phase", function (this: FlowLabWorld) {
+  assert.ok(this.config, "Expected a configured phase plan");
+  this.result = runScenario(this.config, 42);
+});
+
+Then("the existing work remains represented in Development or downstream", function (this: FlowLabWorld) {
+  const boundary = phaseAt(this, "WIP Limits").startDay;
+  const snapshot = resultFor(this).snapshots[boundary];
+  assert.ok((snapshot.states.Development ?? 0) + (snapshot.states.Integration ?? 0) + (snapshot.states.Test ?? 0) > 0);
+});
+
+Then("only later admissions are constrained by the new WIP limits", function (this: FlowLabWorld) {
+  const boundary = phaseAt(this, "WIP Limits").startDay;
+  const result = resultFor(this);
+  assert.equal(result.events.filter((event) => event.day >= boundary && event.type === "entered-stage" && event.stage === "Development").length, 0);
+});
+
+When("I move WIP Limits before Baseline", function (this: FlowLabWorld) {
+  assert.ok(this.phasePlan, "Expected a phase plan");
+  this.phasePlan = [...this.phasePlan].reverse();
+  configurePhasePlan(this);
+});
+
+Then(/^WIP Limits covers days (\d+) through (\d+)$/, function (this: FlowLabWorld, startDay: string, endDay: string) {
+  const phase = phaseAt(this, "WIP Limits");
+  assert.equal(phase.startDay, Number(startDay));
+  assert.equal(phase.endDay, Number(endDay));
+});
+
+Then(/^Baseline covers days (\d+) through (\d+)$/, function (this: FlowLabWorld, startDay: string, endDay: string) {
+  const phase = phaseAt(this, "Baseline");
+  assert.equal(phase.startDay, Number(startDay));
+  assert.equal(phase.endDay, Number(endDay));
+});
+
+Given("a phase plan with Baseline for {int} working days, WIP Limits for {int} working days, and Start Finishing - Stop Starting for {int} working days", function (this: FlowLabWorld, baselineDays: number, wipDays: number, finishingDays: number) {
+  this.phasePlan = [
+    { id: "phase-1", scenarioId: "baseline", durationDays: baselineDays },
+    { id: "phase-2", scenarioId: "wip", durationDays: wipDays },
+    { id: "phase-3", scenarioId: "swarm", durationDays: finishingDays },
+  ];
+  configurePhasePlan(this);
+});
+
+When("I remove the WIP Limits phase", function (this: FlowLabWorld) {
+  this.phasePlan = (this.phasePlan ?? []).filter((phase) => phase.scenarioId !== "wip");
+  configurePhasePlan(this);
+});
+
+Then(/^Start Finishing - Stop Starting covers days (\d+) through (\d+)$/, function (this: FlowLabWorld, startDay: string, endDay: string) {
+  const phase = phaseAt(this, "Start Finishing - Stop Starting");
+  assert.equal(phase.startDay, Number(startDay));
+  assert.equal(phase.endDay, Number(endDay));
+});
+
+When("I set a phase duration to {int} working days", function (this: FlowLabWorld, duration: number) {
+  const current = this.phasePlan?.length ? this.phasePlan : [{ id: "phase-1", scenarioId: "baseline" as const, durationDays: 20 }];
+  this.phasePlan = current;
+  this.phasePlanBeforeEdit = structuredClone(current);
+  const invalid = current.map((phase, index) => index === 0 ? { ...phase, durationDays: duration } : phase);
+  try {
+    projectPhasesForPlan(projectHeader(20, 0), invalid);
+  } catch (error) {
+    this.phasePlanError = error instanceof Error ? error.message : String(error);
+  }
+});
+
+Then("I am told that a phase duration must be a positive whole number", function (this: FlowLabWorld) {
+  assert.equal(this.phasePlanError, "A phase duration must be a positive whole number.");
+});
+
+Then("the saved phase plan remains unchanged", function (this: FlowLabWorld) {
+  assert.deepEqual(this.phasePlan, this.phasePlanBeforeEdit);
+});
+
+When("I save the simulation as a project file", function (this: FlowLabWorld) {
+  const config = configurePhasePlan(this);
+  this.phasePlanBeforeEdit = structuredClone(this.phasePlan);
+  this.projectFile = parseProjectFile(JSON.stringify(createProjectFile(config, 42, "GUI plan")));
+});
+
+When("I load that project file", function (this: FlowLabWorld) {
+  assert.ok(this.projectFile, "Expected a saved project file");
+  this.phasePlan = phasePlanFromProject(this.projectFile);
+  this.config = configFromProjectFile(this.projectFile);
+});
+
+Then("the phase plan retains the same intervention order and durations", function (this: FlowLabWorld) {
+  assert.deepEqual(
+    this.phasePlan?.map(({ scenarioId, durationDays }) => ({ scenarioId, durationDays })),
+    this.phasePlanBeforeEdit?.map(({ scenarioId, durationDays }) => ({ scenarioId, durationDays })),
+  );
+});
+
+Then("the loaded project has a {int}-working-day simulation horizon", function (this: FlowLabWorld, horizon: number) {
+  assert.equal(this.config?.horizonDays, horizon);
 });

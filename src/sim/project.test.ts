@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { runScenario } from "./engine";
-import { configFromProjectFile, createProjectFile, parseProjectFile, phaseSettingsFor } from "./project";
+import { configFromProjectFile, createProjectFile, parseProjectFile, phasePlanFromProject, phaseSettingsFor, projectPhasesForPlan } from "./project";
 import { scenarios } from "./scenarios";
 
 function projectConfig() {
@@ -29,6 +29,33 @@ function projectConfig() {
 }
 
 describe("project files", () => {
+  it("builds contiguous phase settings from an editable intervention plan", () => {
+    const header = {
+      ...scenarios.baseline,
+      horizonDays: 50,
+      arrivalRatePerDay: 2.4,
+      baseRates: { Development: 2, Test: 1 },
+    };
+    const phases = projectPhasesForPlan(header, [
+      { id: "baseline", scenarioId: "baseline", durationDays: 20 },
+      { id: "wip", scenarioId: "wip", durationDays: 30 },
+    ]);
+
+    expect(phases.map(({ label, startDay, endDay }) => ({ label, startDay, endDay }))).toEqual([
+      { label: "Baseline", startDay: 0, endDay: 19 },
+      { label: "WIP Limits", startDay: 20, endDay: 49 },
+    ]);
+    expect(phases[0].settings.wipLimits).toBeUndefined();
+    expect(phases[1].settings.wipLimits).toEqual({ Development: 5, Integration: 5, Test: 5 });
+    expect(phases[1].settings.arrivalRatePerDay).toBe(2.4);
+    expect(phases[1].settings.baseRates).toEqual({ Development: 2, Test: 1 });
+  });
+
+  it("rejects a non-positive duration in an editable intervention plan", () => {
+    expect(() => projectPhasesForPlan(scenarios.baseline, [{ id: "invalid", scenarioId: "baseline", durationDays: 0 }]))
+      .toThrow("A phase duration must be a positive whole number.");
+  });
+
   it("applies a phase at the start of its first day without removing existing work", () => {
     const result = runScenario(projectConfig(), 42);
     expect(result.features).toHaveLength(10);
@@ -46,6 +73,10 @@ describe("project files", () => {
     expect(loaded.seed).toBe(42);
     expect(loaded.config.featureBacklog?.featureCount).toBe(10);
     expect(configFromProjectFile(loaded).projectPhases).toEqual(source.projectPhases);
+    expect(phasePlanFromProject(loaded).map(({ scenarioId, durationDays }) => ({ scenarioId, durationDays }))).toEqual([
+      { scenarioId: "baseline", durationDays: 2 },
+      { scenarioId: "wip", durationDays: 2 },
+    ]);
   });
 
   it("rejects incomplete and overlapping timelines", () => {
