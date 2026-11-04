@@ -56,6 +56,7 @@ class FlowLabWorld extends World {
   phasePlan?: PhasePlanEntry[];
   phasePlanBeforeEdit?: PhasePlanEntry[];
   phasePlanError?: string;
+  showFeatureHandoffs?: boolean;
 }
 
 setWorldConstructor(FlowLabWorld);
@@ -79,6 +80,21 @@ function hasRoute(result: SimulationResult, from: string, to: string): boolean {
 function meanResultFor(world: FlowLabWorld): MeanSimulationResult {
   assert.ok(world.meanResult, "Expected a completed mean simulation");
   return world.meanResult;
+}
+
+function featureHandoffMarkers(result: SimulationResult): Array<{ day: number; titles: string[] }> {
+  return Array.from(
+    result.features
+      .filter((feature) => feature.handoffAt !== undefined)
+      .reduce((byDay, feature) => {
+        const day = feature.handoffAt as number;
+        const titles = byDay.get(day) ?? [];
+        titles.push(feature.title);
+        byDay.set(day, titles);
+        return byDay;
+      }, new Map<number, string[]>()),
+    ([day, titles]) => ({ day, titles }),
+  );
 }
 
 function withSeededBacklog(config: ScenarioConfig, pbiCount = 200): ScenarioConfig {
@@ -1660,6 +1676,39 @@ Then("the Kanban board identifies the feature on all three PBIs", function (this
   assert.ok(resultFor(this).items.filter((item) => feature.pbiIds.includes(item.id)).every((item) => item.featureId === feature.id && item.featureTitle === feature.title));
 });
 
+Given("a WIP-limited Feature with {int} PBIs and staggered Development completion", function (this: FlowLabWorld, pbiCount: number) {
+  this.config = featureFlowConfig({
+    horizonDays: 8,
+    featureBacklog: { featureCount: 1, minPbisPerFeature: pbiCount, maxPbisPerFeature: pbiCount, baseBugEffort: 1, feedbackDelayEffortFactor: 0 },
+    wipLimits: { Development: 5, Integration: 5, Test: 1 },
+    baseRates: { Development: 2, Test: 1 },
+    serviceEffort: { Development: { min: 5, max: 5 }, Test: { min: 10, max: 10 } },
+    operatingAssumptions: {
+      Development: { focusWip: 5, maximumConcurrency: 2, taskSwitchingLossRatio: 0 },
+      Test: { focusWip: 1, maximumConcurrency: 1, taskSwitchingLossRatio: 0 },
+    },
+  });
+});
+
+When("a developed PBI can be pulled into Test", function (this: FlowLabWorld) {
+  assert.ok(this.config, "Expected a WIP-limited Feature configuration");
+  this.result = runScenario(this.config, 42);
+});
+
+Then("it enters Test without waiting for the remaining PBI to finish Development", function (this: FlowLabWorld) {
+  const result = resultFor(this);
+  const feature = result.features[0];
+  const firstTestEntry = Math.min(...result.events
+    .filter((event) => event.type === "entered-stage" && event.stage === "Test" && feature.pbiIds.includes(event.itemId))
+    .map((event) => event.day));
+  const lastDevelopmentCompletion = Math.max(...feature.pbiIds.map((id) => result.items.find((item) => item.id === id)?.developedAt ?? -1));
+  assert.ok(firstTestEntry < lastDevelopmentCompletion);
+});
+
+Then("Test WIP still limits how many ready PBIs can enter", function (this: FlowLabWorld) {
+  assert.ok(resultFor(this).snapshots.every((snapshot) => snapshot.states.Test <= 1));
+});
+
 Given("a tested PBI from feature {string}", function (this: FlowLabWorld, _featureTitle: string) {
   this.config = featureFlowConfig({
     horizonDays: 41,
@@ -2482,4 +2531,102 @@ Then("the phase plan retains the same intervention order and durations", functio
 
 Then("the loaded project has a {int}-working-day simulation horizon", function (this: FlowLabWorld, horizon: number) {
   assert.equal(this.config?.horizonDays, horizon);
+});
+
+Given("a seeded simulation with a Feature whose PBIs are ready for Test", function (this: FlowLabWorld) {
+  this.config = featureFlowConfig();
+  this.result = runScenario(this.config, 42);
+});
+
+Given("Test admits the Feature's PBIs over more than one working day", function (this: FlowLabWorld) {
+  const feature = resultFor(this).features[0];
+  const entryDays = resultFor(this).events
+    .filter((event) => event.type === "entered-stage" && event.stage === "Test" && feature.pbiIds.includes(event.itemId))
+    .map((event) => event.day);
+  assert.ok(new Set(entryDays).size > 1);
+});
+
+When("the last PBI of that Feature first enters Test", function (this: FlowLabWorld) {
+  const feature = resultFor(this).features[0];
+  const entryDays = resultFor(this).events
+    .filter((event) => event.type === "entered-stage" && event.stage === "Test" && feature.pbiIds.includes(event.itemId))
+    .map((event) => event.day);
+  assert.equal(feature.handoffAt, Math.max(...entryDays));
+});
+
+When("I enable {string} in the CFD", function (this: FlowLabWorld, control: string) {
+  assert.equal(control, "Show Feature handoffs");
+  this.showFeatureHandoffs = true;
+});
+
+Then("the CFD shows one Feature-handoff marker on that day", function (this: FlowLabWorld) {
+  const feature = resultFor(this).features[0];
+  const markers = featureHandoffMarkers(resultFor(this));
+  assert.equal(markers.filter((marker) => marker.day === feature.handoffAt).length, 1);
+});
+
+Then("the marker identifies the handed-over Feature", function (this: FlowLabWorld) {
+  const feature = resultFor(this).features[0];
+  const marker = featureHandoffMarkers(resultFor(this)).find((candidate) => candidate.day === feature.handoffAt);
+  assert.ok(marker?.titles.includes(feature.title));
+});
+
+Then("no Feature-handoff marker is shown before every PBI of that Feature has entered Test", function (this: FlowLabWorld) {
+  const feature = resultFor(this).features[0];
+  const entryDays = feature.pbiIds.map((id) => resultFor(this).items.find((item) => item.id === id)?.enteredAt.Test);
+  assert.ok(entryDays.every((day): day is number => day !== undefined));
+  assert.equal(feature.handoffAt, Math.max(...entryDays));
+});
+
+Then("feedback Bugs do not delay or add another Feature-handoff marker", function (this: FlowLabWorld) {
+  const feature = resultFor(this).features[0];
+  assert.ok(feature.bugIds.length > 0);
+  assert.equal(featureHandoffMarkers(resultFor(this)).filter((marker) => marker.titles.includes(feature.title)).length, 1);
+});
+
+Given("a seeded simulation where two Features are handed over to Test on the same day", function (this: FlowLabWorld) {
+  this.config = featureFlowConfig({
+    horizonDays: 4,
+    batchSize: 2,
+    featureBacklog: { featureCount: 2, minPbisPerFeature: 1, maxPbisPerFeature: 1, baseBugEffort: 1, feedbackDelayEffortFactor: 0.1 },
+    operatingAssumptions: {
+      Development: { focusWip: 2, maximumConcurrency: 2, taskSwitchingLossRatio: 0 },
+      Test: { focusWip: 2, maximumConcurrency: 2, taskSwitchingLossRatio: 0 },
+    },
+  });
+  this.result = runScenario(this.config, 42);
+  const handoffDays = resultFor(this).features.map((feature) => feature.handoffAt);
+  assert.equal(new Set(handoffDays).size, 1);
+});
+
+Then("the CFD shows one handoff marker on their shared handoff day", function (this: FlowLabWorld) {
+  assert.equal(featureHandoffMarkers(resultFor(this)).length, 1);
+});
+
+Then("the marker identifies that {int} Features were handed over", function (this: FlowLabWorld, count: number) {
+  assert.equal(featureHandoffMarkers(resultFor(this))[0]?.titles.length, count);
+});
+
+Given("a seeded simulation with at least one Feature handoff", function (this: FlowLabWorld) {
+  this.config = featureFlowConfig();
+  this.result = runScenario(this.config, 42);
+  assert.ok(resultFor(this).features.some((feature) => feature.handoffAt !== undefined));
+});
+
+When("{string} is disabled", function (this: FlowLabWorld, control: string) {
+  assert.equal(control, "Show Feature handoffs");
+  this.showFeatureHandoffs = false;
+});
+
+Then("the CFD does not show Feature-handoff markers", function (this: FlowLabWorld) {
+  assert.equal(this.showFeatureHandoffs, false);
+});
+
+When("I view a mean CFD across multiple seeds", function (this: FlowLabWorld) {
+  assert.ok(this.config, "Expected a feature-backed configuration");
+  this.meanResult = runMeanScenario(this.config, 2, 42);
+});
+
+Then("the Feature-handoff visualization is unavailable because there is no single item history", function (this: FlowLabWorld) {
+  assert.equal("features" in meanResultFor(this), false);
 });

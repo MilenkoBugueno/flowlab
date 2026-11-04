@@ -42,6 +42,12 @@ Feature: Feature decomposition, test gating, and delayed-feedback bugs
     And 1 PBI remains waiting for a free Test WIP slot
     And the Kanban board identifies the feature on all three PBIs
 
+  Scenario: WIP limits pull individually developed PBIs into Test
+    Given a WIP-limited Feature with 3 PBIs and staggered Development completion
+    When a developed PBI can be pulled into Test
+    Then it enters Test without waiting for the remaining PBI to finish Development
+    And Test WIP still limits how many ready PBIs can enter
+
   Scenario: Testing a PBI creates one traceable feedback bug
     Given a tested PBI from feature "Feature 001"
     And the bug generation ratio is one bug per tested PBI

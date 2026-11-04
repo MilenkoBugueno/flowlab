@@ -39,7 +39,6 @@ function inventoryForStages(inventory: InitialInventory, stages: string[]): Init
 }
 
 export default function App() {
-  const [scenarioId, setScenarioId] = useState<ScenarioId>("baseline");
   const [seedInput, setSeedInput] = useState("42");
   const [arrivalRateInput, setArrivalRateInput] = useState(String(scenarios.baseline.arrivalRatePerDay));
   const [savedArrivalRate, setSavedArrivalRate] = useState(scenarios.baseline.arrivalRatePerDay);
@@ -79,8 +78,8 @@ export default function App() {
   const projectFileInput = useRef<HTMLInputElement>(null);
   const seed = Number.isFinite(Number(seedInput)) ? Math.max(0, Math.floor(Number(seedInput))) : 42;
   const projectBaseConfig = useMemo(
-    () => ({ ...scenarios[scenarioId], ...projectHeaderOverrides, projectPhases: undefined }),
-    [scenarioId, projectHeaderOverrides],
+    () => ({ ...scenarios.baseline, ...projectHeaderOverrides, projectPhases: undefined }),
+    [projectHeaderOverrides],
   );
   const workflowConfig = useMemo(() => withWorkflow(projectBaseConfig, workflow), [projectBaseConfig, workflow]);
   const customizedConfig = useMemo(
@@ -113,7 +112,8 @@ export default function App() {
   const [visualization, setVisualization] = useState<"cfd" | "kanban">("cfd");
   const [showInactiveWork, setShowInactiveWork] = useState(false);
   const [showFeatureCompletions, setShowFeatureCompletions] = useState(false);
-  const scenario = scenarios[scenarioId];
+  const [showFeatureHandoffs, setShowFeatureHandoffs] = useState(false);
+  const isBaselinePlan = phasePlan.every((phase) => phase.scenarioId === "baseline");
   const activeWorkflowStages = activeStages(workflowConfig.workflow);
   const fallbackIncident: CapacityIncident = {
     stage: activeWorkflowStages[0] ?? "",
@@ -132,18 +132,6 @@ export default function App() {
   };
   const swarmForm = swarmDraft ?? savedSwarm ?? workflowConfig.swarm ?? fallbackSwarm;
 
-  const updateScenario = (id: ScenarioId) => {
-    setScenarioId(id);
-    setProjectHeaderOverrides({});
-    setPhasePlan([{ id: "phase-1", scenarioId: id, durationDays: scenarios[id].horizonDays }]);
-    setPhasePlanError(undefined);
-    setSavedFeatureFocus(undefined);
-    setFeatureFocusEnabled(scenarios[id].featureFocus !== undefined);
-    setFeatureFocusStartDay(String(scenarios[id].featureFocus?.startDay ?? 0));
-    setFeatureFocusError(undefined);
-    setSelectedDay(50);
-  };
-
   const saveProjectFile = () => {
     const project = createProjectFile(selectedConfig, seed, projectName.trim() || "FlowLab project");
     const blob = new Blob([JSON.stringify(project, null, 2)], { type: "application/json" });
@@ -160,8 +148,6 @@ export default function App() {
     try {
       const project = parseProjectFile(await file.text());
       const config = configFromProjectFile(project);
-      const scenario = Object.hasOwn(scenarios, config.id) ? config.id : "baseline";
-      setScenarioId(scenario);
       setSeedInput(String(project.seed));
       setProjectName(project.name);
       setWorkflow(config.workflow.stages);
@@ -245,7 +231,7 @@ export default function App() {
   const saveWorkflow = () => {
     try {
       const nextWorkflow = workflowInput.split(",");
-      withWorkflow(scenarios[scenarioId], nextWorkflow);
+      withWorkflow(projectBaseConfig, nextWorkflow);
       setWorkflow(nextWorkflow.map((stage) => stage.trim()));
       setSavedRates({});
       setRateDraft({});
@@ -423,26 +409,6 @@ export default function App() {
             {projectFileError && <p className="settings-error" role="alert">{projectFileError}</p>}
           </section>
 
-          <section className="panel-section scenario-section" aria-labelledby="scenario-heading">
-            <p className="eyebrow">Intervention</p>
-            <h2 id="scenario-heading">Scenario</h2>
-            <div className="scenario-tabs" role="tablist" aria-label="Simulation scenarios">
-              {scenarioList.map((entry) => (
-                <button
-                  key={entry.id}
-                  type="button"
-                  role="tab"
-                  aria-selected={entry.id === scenarioId}
-                  className={entry.id === scenarioId ? "active" : ""}
-                  onClick={() => updateScenario(entry.id)}
-                >
-                  {entry.label}
-                </button>
-              ))}
-            </div>
-            <p className="scenario-summary">{scenario.summary}</p>
-          </section>
-
           <section className="panel-section workflow-editor" aria-labelledby="workflow-heading">
             <p className="eyebrow">Customize</p>
             <h2 id="workflow-heading">Workflow</h2>
@@ -565,7 +531,7 @@ export default function App() {
             <button type="button" role="tab" aria-selected={visualization === "kanban"} className={visualization === "kanban" ? "active" : ""} onClick={() => setVisualization("kanban")}>Kanban</button>
           </div>
           {visualization === "cfd" ? (
-            <CfdChart result={selected} selectedDay={visibleSelectedDay} onSelectDay={setSelectedDay} showInactiveWork={showInactiveWork} onShowInactiveWorkChange={setShowInactiveWork} showFeatureCompletions={showFeatureCompletions} onShowFeatureCompletionsChange={setShowFeatureCompletions} />
+            <CfdChart result={selected} selectedDay={visibleSelectedDay} onSelectDay={setSelectedDay} showInactiveWork={showInactiveWork} onShowInactiveWorkChange={setShowInactiveWork} showFeatureCompletions={showFeatureCompletions} onShowFeatureCompletionsChange={setShowFeatureCompletions} showFeatureHandoffs={showFeatureHandoffs} onShowFeatureHandoffsChange={setShowFeatureHandoffs} />
           ) : "dailyLog" in selected ? (
             <KanbanBoard result={selected} selectedDay={visibleSelectedDay} onSelectDay={setSelectedDay} />
           ) : (
@@ -590,7 +556,7 @@ export default function App() {
                   <span>{label}</span>
                   <strong>{formatMetric(key, value)}</strong>
                   <small className={comparisonClass}>
-                    {scenarioId === "baseline" ? "Reference" : `${delta > 0 ? "+" : ""}${formatMetric(key, delta)} vs baseline`}
+                    {isBaselinePlan ? "Reference" : `${delta > 0 ? "+" : ""}${formatMetric(key, delta)} vs baseline`}
                   </small>
                 </article>
               );

@@ -44,6 +44,12 @@ function nextStage(stage: ActiveStage, stages: Stage[]): Stage {
   return next;
 }
 
+/** Keep same-day queue ties deterministic without grouping work by Feature. */
+function compareQueuePosition(first: WorkItem, second: WorkItem): number {
+  return first.positionId - second.positionId
+    || first.id.localeCompare(second.id, undefined, { numeric: true });
+}
+
 export function processingRateFor(stage: ActiveStage, day: number, config: ScenarioConfig): number {
   let rate = config.baseRates[stage] ?? 1;
   if (config.incident && config.incident.stage === stage && day >= config.incident.startDay && day <= config.incident.endDay) {
@@ -88,6 +94,7 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
   const demandRandom = createSeededRandom(seed);
   const effortRandom = createSeededRandom(deriveSeed(seed, 0x9e3779b9));
   const featureRandom = createSeededRandom(deriveSeed(seed, 0xc2b2ae35));
+  const positionRandom = createSeededRandom(deriveSeed(seed, 0x85ebca6b));
   const items: WorkItem[] = [];
   const features: Feature[] = [];
   const events: FlowEvent[] = [];
@@ -136,6 +143,7 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
       type,
       initial,
       arrivedAt: day,
+      positionId: positionRandom.next(),
       stage: initialStage,
       status: "waiting",
       active: false,
@@ -173,6 +181,7 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
     else item.effortRemaining = 0;
     record(day, "entered-stage", item, stage);
     recordMovement(day, from, stage);
+    updateFeatureHandoff(day, item, stage);
   };
 
   const complete = (day: number, item: WorkItem, from: Stage) => {
@@ -187,9 +196,20 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
 
   const featureBacklog = config.featureBacklog ?? { featureCount: 0, minPbisPerFeature: 5, maxPbisPerFeature: 10, baseBugEffort: 1, feedbackDelayEffortFactor: 0.1 };
   const featureFor = (item: WorkItem): Feature | undefined => features.find((feature) => feature.id === item.featureId);
-  const featureTestGateOpen = (item: WorkItem): boolean => {
+  const featureTestGateOpen = (item: WorkItem, dayConfig: ScenarioConfig): boolean => {
+    // WIP-limited flow pulls each ready item independently; the Feature-wide
+    // test gate is a baseline-flow policy, not an additional WIP constraint.
+    if (dayConfig.wipLimits !== undefined) return true;
     const feature = featureFor(item);
     return !feature || feature.pbiIds.every((pbiId) => items.find((candidate) => candidate.id === pbiId)?.developedAt !== undefined);
+  };
+  const updateFeatureHandoff = (day: number, item: WorkItem, stage: Stage) => {
+    if (stage !== testStage || item.type !== "PBI" || !item.featureId) return;
+    const feature = featureFor(item);
+    if (!feature || feature.handoffAt !== undefined) return;
+    if (feature.pbiIds.every((pbiId) => items.find((candidate) => candidate.id === pbiId)?.enteredAt[testStage] !== undefined)) {
+      feature.handoffAt = day;
+    }
   };
   const completionFocusFor = (day: number, dayConfig: ScenarioConfig): Feature | undefined => {
     if (!dayConfig.featureFocus || day < dayConfig.featureFocus.startDay) return undefined;
@@ -200,16 +220,7 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
   const canEnter = (target: Stage, dayConfig: ScenarioConfig): boolean => {
     const wipLimit = dayConfig.wipLimits?.[target];
     if (wipLimit === undefined) return true;
-    const countedItems = items.filter((item) => {
-      const isDependencyGatedDevelopment = target === developmentStage
-        && item.stage === developmentStage
-        && item.status === "blocked"
-        && item.type === "PBI"
-        && item.featureId !== undefined
-        && !featureTestGateOpen(item);
-      return item.stage === target && !isDependencyGatedDevelopment;
-    });
-    return countedItems.length < wipLimit;
+    return items.filter((item) => item.stage === target).length < wipLimit;
   };
 
   const createFeedbackBug = (day: number, pbi: WorkItem) => {
@@ -237,10 +248,10 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
     const target = nextStage(from, stages);
     const candidates = items
       .filter((item) => item.stage === from && item.status === "blocked")
-      .sort((a, b) => (a.enteredAt[from] ?? 0) - (b.enteredAt[from] ?? 0));
+      .sort((a, b) => (a.enteredAt[from] ?? 0) - (b.enteredAt[from] ?? 0) || compareQueuePosition(a, b));
     for (const item of candidates) {
       if (!isFocused(item, focus)) continue;
-      if (target === testStage && item.type === "PBI" && !featureTestGateOpen(item)) continue;
+      if (target === testStage && item.type === "PBI" && !featureTestGateOpen(item, dayConfig)) continue;
       if (target === exitStage) complete(day, item, from);
       else if (canEnter(target, dayConfig)) enter(day, item, target);
     }
@@ -250,10 +261,10 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
     const target = nextStage(from, stages);
     const candidates = items
       .filter((item) => item.stage === from && item.status === "waiting")
-      .sort((a, b) => (a.enteredAt[from] ?? 0) - (b.enteredAt[from] ?? 0));
+      .sort((a, b) => (a.enteredAt[from] ?? 0) - (b.enteredAt[from] ?? 0) || compareQueuePosition(a, b));
     for (const item of candidates) {
       if (!isFocused(item, focus)) continue;
-      if (target === testStage && item.type === "PBI" && !featureTestGateOpen(item)) continue;
+      if (target === testStage && item.type === "PBI" && !featureTestGateOpen(item, dayConfig)) continue;
       if (target === exitStage) complete(day, item, from);
       else if (canEnter(target, dayConfig)) enter(day, item, target);
     }
@@ -262,7 +273,7 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
   const admitBacklogWork = (day: number, pushAllowance: number, focus: Feature | undefined, dayConfig: ScenarioConfig) => {
     const entryItems = items
       .filter((item) => item.stage === entryStage && isFocused(item, focus))
-      .sort((a, b) => a.arrivedAt - b.arrivedAt);
+      .sort((a, b) => a.arrivedAt - b.arrivedAt || compareQueuePosition(a, b));
     const firstActive = active[0];
     const pullBased = firstActive !== undefined && dayConfig.wipLimits?.[firstActive] !== undefined;
     let remainingAdmissions = pullBased ? Number.POSITIVE_INFINITY : pushAllowance;
@@ -282,7 +293,7 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
     const openSlots = Math.max(0, maximumConcurrency - activeCount);
     const waiting = items
       .filter((item) => item.stage === stage && item.status === "waiting" && isFocused(item, focus))
-      .sort((a, b) => (a.enteredAt[stage] ?? 0) - (b.enteredAt[stage] ?? 0));
+      .sort((a, b) => (a.enteredAt[stage] ?? 0) - (b.enteredAt[stage] ?? 0) || compareQueuePosition(a, b));
     for (const item of waiting.slice(0, openSlots)) {
       item.status = "active";
       item.active = true;

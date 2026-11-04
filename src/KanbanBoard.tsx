@@ -17,6 +17,12 @@ interface Props {
   onSelectDay: (day: number) => void;
 }
 
+function compareCards(stage: Stage, first: { item: WorkItem }, second: { item: WorkItem }): number {
+  return (first.item.enteredAt[stage] ?? first.item.arrivedAt) - (second.item.enteredAt[stage] ?? second.item.arrivedAt)
+    || first.item.positionId - second.item.positionId
+    || first.item.id.localeCompare(second.item.id, undefined, { numeric: true });
+}
+
 export function KanbanBoard({ result, selectedDay, onSelectDay }: Props) {
   const stages = result.config.workflow.stages;
   const cardsByStage = new Map<Stage, Array<{ item: WorkItem; state: ItemTimelineState }>>(
@@ -43,7 +49,7 @@ export function KanbanBoard({ result, selectedDay, onSelectDay }: Props) {
       </header>
       <div className="kanban-columns">
         {stages.map((stage) => {
-          const cards = cardsByStage.get(stage) ?? [];
+          const cards = (cardsByStage.get(stage) ?? []).sort((first, second) => compareCards(stage, first, second));
           return (
             <section className="kanban-column" key={stage} aria-label={`${stage}: ${cards.length} items`}>
               <h3>{stage}<small>{cards.length}</small></h3>

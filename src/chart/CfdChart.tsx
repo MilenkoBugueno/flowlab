@@ -16,9 +16,11 @@ interface Props {
   onShowInactiveWorkChange: (show: boolean) => void;
   showFeatureCompletions: boolean;
   onShowFeatureCompletionsChange: (show: boolean) => void;
+  showFeatureHandoffs: boolean;
+  onShowFeatureHandoffsChange: (show: boolean) => void;
 }
 
-export function CfdChart({ result, selectedDay, onSelectDay, showInactiveWork, onShowInactiveWorkChange, showFeatureCompletions, onShowFeatureCompletionsChange }: Props) {
+export function CfdChart({ result, selectedDay, onSelectDay, showInactiveWork, onShowInactiveWorkChange, showFeatureCompletions, onShowFeatureCompletionsChange, showFeatureHandoffs, onShowFeatureHandoffsChange }: Props) {
   const svgRef = useRef<SVGSVGElement>(null);
   const { config, snapshots } = result;
   const meanRunCount = "seeds" in result ? result.seeds.length : 1;
@@ -66,7 +68,22 @@ export function CfdChart({ result, selectedDay, onSelectDay, showInactiveWork, o
       ([day, titles]) => ({ day, titles }),
     )
     : [];
-  const canShowFeatureCompletions = "features" in result;
+  const featureHandoffs = "features" in result
+    ? Array.from(
+      result.features
+        .filter((feature) => feature.handoffAt !== undefined)
+        .reduce((byDay, feature) => {
+          const day = feature.handoffAt as number;
+          const titles = byDay.get(day) ?? [];
+          titles.push(feature.title);
+          byDay.set(day, titles);
+          return byDay;
+        }, new Map<number, string[]>()),
+      ([day, titles]) => ({ day, titles }),
+    )
+    : [];
+  const canShowFeatureMarkers = "features" in result;
+  const finalActiveStage = activeStages(config.workflow).at(-1) ?? workflowStages.at(-2) ?? "the final working stage";
 
   const selectFromPointer = (event: React.MouseEvent<SVGSVGElement>) => {
     const svg = svgRef.current;
@@ -86,8 +103,11 @@ export function CfdChart({ result, selectedDay, onSelectDay, showInactiveWork, o
         <div className="chart-controls">
           <p className="chart-hint">{meanRunCount > 1 ? `Mean of ${meanRunCount} simulations · select a day to inspect averages.` : "Select a day on the chart to inspect its queues."}</p>
           <label className="cfd-inactive-toggle"><input type="checkbox" checked={showInactiveWork} onChange={(event) => onShowInactiveWorkChange(event.target.checked)} />Show inactive work</label>
-          <label className="cfd-feature-toggle" title={canShowFeatureCompletions ? "Show one marker per Feature completion day." : "Feature completion markers belong to individual simulation runs."}>
-            <input type="checkbox" checked={showFeatureCompletions} disabled={!canShowFeatureCompletions} onChange={(event) => onShowFeatureCompletionsChange(event.target.checked)} />Show completed Features
+          <label className="cfd-feature-toggle" title={canShowFeatureMarkers ? "Show one marker per Feature completion day." : "Feature completion markers belong to individual simulation runs."}>
+            <input type="checkbox" checked={showFeatureCompletions} disabled={!canShowFeatureMarkers} onChange={(event) => onShowFeatureCompletionsChange(event.target.checked)} />Show completed Features
+          </label>
+          <label className="cfd-feature-toggle" title={canShowFeatureMarkers ? `Show one marker when the last PBI in a Feature enters ${finalActiveStage}.` : "Feature handoff markers belong to individual simulation runs."}>
+            <input type="checkbox" checked={showFeatureHandoffs} disabled={!canShowFeatureMarkers} onChange={(event) => onShowFeatureHandoffsChange(event.target.checked)} />Show Feature handoffs
           </label>
         </div>
       </div>
@@ -99,7 +119,8 @@ export function CfdChart({ result, selectedDay, onSelectDay, showInactiveWork, o
           <span className="activity-key"><i className="active-key" />Active work</span>
           <span className="activity-key"><i className="inactive-key" />Inactive / waiting</span>
         </>}
-        {showFeatureCompletions && canShowFeatureCompletions && <span className="feature-completion-key"><i />Feature completed</span>}
+        {showFeatureCompletions && canShowFeatureMarkers && <span className="feature-completion-key"><i />Feature completed</span>}
+        {showFeatureHandoffs && canShowFeatureMarkers && <span className="feature-handoff-key"><i />Feature handed over</span>}
       </div>
       <svg
         ref={svgRef}
@@ -143,6 +164,14 @@ export function CfdChart({ result, selectedDay, onSelectDay, showInactiveWork, o
             <circle cx={x(day)} cy={margin.top + 10} r="7" />
             <path d={`M ${x(day) - 3} ${margin.top + 10} l 2.2 2.4 l 4.2 -5`} />
             {titles.length > 1 && <text x={x(day) + 10} y={margin.top + 14}>×{titles.length}</text>}
+          </g>
+        ))}
+        {showFeatureHandoffs && featureHandoffs.map(({ day, titles }) => (
+          <g key={`feature-handoff-${day}`} className="feature-handoff-marker">
+            <title>{titles.length === 1 ? `${titles[0]} handed over to ${finalActiveStage} on day ${day}` : `${titles.length} Features handed over to ${finalActiveStage} on day ${day}`}</title>
+            <line x1={x(day)} x2={x(day)} y1={margin.top} y2={height - margin.bottom} />
+            <path d={`M ${x(day)} ${margin.top + 20} l 5 5 l -5 5 l -5 -5 Z`} />
+            {titles.length > 1 && <text x={x(day) + 10} y={margin.top + 30}>×{titles.length}</text>}
           </g>
         ))}
         <line x1={x(selectedDay)} x2={x(selectedDay)} y1={margin.top} y2={height - margin.bottom} className="selected-day" />

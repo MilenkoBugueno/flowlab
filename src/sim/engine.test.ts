@@ -99,6 +99,24 @@ describe("FlowLab simulation engine", () => {
     expect(result.features[0].completedAt).toBeDefined();
   });
 
+  it("counts Feature PBIs waiting for the test gate against the Development WIP limit", () => {
+    const result = runScenario({
+      ...scenarios.wip,
+      horizonDays: 40,
+      initialInventory: {},
+      featureBacklog: {
+        featureCount: 1,
+        minPbisPerFeature: 10,
+        maxPbisPerFeature: 10,
+        baseBugEffort: 1,
+        feedbackDelayEffortFactor: 0,
+      },
+    }, 42);
+
+    expect(result.snapshots.every((snapshot) => snapshot.states.Development <= 5)).toBe(true);
+    expect(result.snapshots.every((snapshot) => snapshot.states.Integration <= 5)).toBe(true);
+  });
+
   it("reduces Test queue-days with a scheduled swarm for the default seed", () => {
     const initialBacklog = { pbiCount: 200, bugCount: 0 };
     const baseline = runScenario({ ...scenarios.baseline, initialBacklog }, 42);
@@ -247,6 +265,7 @@ describe("FlowLab simulation engine", () => {
         type: "PBI",
         initial: false,
         arrivedAt: 0,
+        positionId: 0.5,
         stage: "Done",
         status: "done",
         active: false,
@@ -342,10 +361,11 @@ describe("FlowLab simulation engine", () => {
         Test: { focusWip: 1, maximumConcurrency: 1, taskSwitchingLossRatio: 0 },
       },
     }, 42);
-    const [worked, waiting] = result.items;
-    expect(worked.progressPercent).toBeGreaterThan(0);
-    expect(waiting.progressPercent).toBe(0);
-    expect(waiting.firstStartedAt).toBeUndefined();
+    const worked = result.items.find((item) => item.firstStartedAt !== undefined);
+    const waiting = result.items.find((item) => item.firstStartedAt === undefined);
+    expect(worked?.progressPercent).toBeGreaterThan(0);
+    expect(waiting?.progressPercent).toBe(0);
+    expect(waiting?.firstStartedAt).toBeUndefined();
   });
 
   it("seeds PBI and bug inventory directly into each configured non-terminal stage", () => {
@@ -395,7 +415,8 @@ describe("FlowLab simulation engine", () => {
       horizonDays: 1,
       warmupDays: 0,
       arrivalRatePerDay: 0,
-      batchDays: [],
+      batchDays: [0],
+      batchSize: 2,
       initialInventory: {},
       featureBacklog: { featureCount: 2, minPbisPerFeature: 3, maxPbisPerFeature: 3, baseBugEffort: 1, feedbackDelayEffortFactor: 0.1 },
       baseRates: { Development: 0.1, Test: 0.1 },
@@ -407,6 +428,32 @@ describe("FlowLab simulation engine", () => {
     expect(first.features.every((feature) => feature.pbiIds.length === 3 && feature.title.length > 0)).toBe(true);
     expect(first.items.filter((item) => item.featureId).every((item) => item.type === "PBI" && item.featureTitle !== undefined)).toBe(true);
     expect(first.features).toEqual(second.features);
+  });
+
+  it("assigns initial backlog PBIs seeded random queue positions", () => {
+    const config = {
+      ...scenarios.baseline,
+      horizonDays: 1,
+      warmupDays: 0,
+      arrivalRatePerDay: 0,
+      batchDays: [0],
+      batchSize: 2,
+      initialInventory: {},
+      featureBacklog: { featureCount: 3, minPbisPerFeature: 2, maxPbisPerFeature: 2, baseBugEffort: 1, feedbackDelayEffortFactor: 0 },
+    };
+    const result = runScenario(config, 42);
+    const repeated = runScenario(config, 42);
+    const differentSeed = runScenario(config, 43);
+
+    const positionIds = result.items.filter((item) => item.featureId).map((item) => item.positionId);
+    const orderedFeatureIds = result.events
+      .filter((event) => event.type === "entered-stage" && event.stage === "Development")
+      .map((event) => result.items.find((item) => item.id === event.itemId)?.featureId);
+    expect(new Set(positionIds).size).toBe(positionIds.length);
+    expect(repeated.items.map((item) => item.positionId)).toEqual(result.items.map((item) => item.positionId));
+    expect(differentSeed.items.map((item) => item.positionId)).not.toEqual(result.items.map((item) => item.positionId));
+    expect(orderedFeatureIds).not.toEqual(["FEATURE-001", "FEATURE-001"]);
+    expect(result.snapshots[0].states.Backlog).toBe(4);
   });
 
   it("gates feature PBIs before Test and creates one delay-priced Bug for each tested PBI", () => {
@@ -435,9 +482,55 @@ describe("FlowLab simulation engine", () => {
     expect(bugs).toHaveLength(3);
     expect(bugs.every((bug) => bug.originatingPbiId && feature.pbiIds.includes(bug.originatingPbiId))).toBe(true);
     expect(bugs.map((bug) => bug.plannedEffort.Development).sort()).toEqual([1.2, 1.2, 1.2]);
+    expect(feature.handoffAt).toBe(Math.max(...testEntries.map((event) => event.day)));
     expect(feature.completedAt).toBeDefined();
     expect(result.metrics.completedFeatures).toBe(1);
     expect(pbis.every((pbi) => pbi.feedbackBugId !== undefined)).toBe(true);
+  });
+
+  it("lets individually developed Feature PBIs enter Test under WIP limits", () => {
+    const result = runScenario({
+      ...scenarios.wip,
+      horizonDays: 8,
+      initialInventory: {},
+      featureBacklog: { featureCount: 1, minPbisPerFeature: 3, maxPbisPerFeature: 3, baseBugEffort: 1, feedbackDelayEffortFactor: 0 },
+      baseRates: { Development: 2, Test: 1 },
+      serviceEffort: { Development: { min: 5, max: 5 }, Test: { min: 10, max: 10 } },
+      operatingAssumptions: {
+        Development: { focusWip: 5, maximumConcurrency: 2, taskSwitchingLossRatio: 0 },
+        Test: { focusWip: 5, maximumConcurrency: 5, taskSwitchingLossRatio: 0 },
+      },
+    }, 42);
+
+    const feature = result.features[0];
+    const firstTestEntry = Math.min(...result.events
+      .filter((event) => event.type === "entered-stage" && event.stage === "Test" && feature.pbiIds.includes(event.itemId))
+      .map((event) => event.day));
+    const lastDevelopmentCompletion = Math.max(...feature.pbiIds.map((id) => result.items.find((item) => item.id === id)?.developedAt ?? -1));
+    expect(firstTestEntry).toBeLessThan(lastDevelopmentCompletion);
+  });
+
+  it("tracks a Feature handoff at the final active stage of a custom workflow", () => {
+    const result = runScenario({
+      ...scenarios.baseline,
+      workflow: { stages: ["Backlog", "Build", "Verify", "Done"] },
+      horizonDays: 4,
+      warmupDays: 0,
+      arrivalRatePerDay: 100,
+      batchDays: [0],
+      batchSize: 1,
+      initialInventory: {},
+      featureBacklog: { featureCount: 1, minPbisPerFeature: 1, maxPbisPerFeature: 1, baseBugEffort: 1, feedbackDelayEffortFactor: 0 },
+      baseRates: { Build: 1, Verify: 1 },
+      serviceEffort: { Build: { min: 1, max: 1 }, Verify: { min: 1, max: 1 } },
+      operatingAssumptions: {
+        Build: { focusWip: 1, maximumConcurrency: 1, taskSwitchingLossRatio: 0 },
+        Verify: { focusWip: 1, maximumConcurrency: 1, taskSwitchingLossRatio: 0 },
+      },
+    }, 42);
+
+    expect(result.features[0].handoffAt).toBe(1);
+    expect(result.items.find((item) => item.featureId === result.features[0].id)?.enteredAt.Verify).toBe(1);
   });
 
   it("validates initial backlog counts", () => {

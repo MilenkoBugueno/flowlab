@@ -78,6 +78,8 @@ export interface Feature {
   title: string;
   pbiIds: string[];
   bugIds: string[];
+  /** Day on which the last PBI first entered the final active workflow stage. */
+  handoffAt?: number;
   completedAt?: number;
 }
 
@@ -112,6 +114,8 @@ export interface WorkItem {
   type: WorkItemType;
   initial: boolean;
   arrivedAt: number;
+  /** Seeded random queue position assigned when the item is created. */
+  positionId: number;
   stage: Stage;
   status: ItemStatus;
   active: boolean;
