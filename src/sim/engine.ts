@@ -50,6 +50,12 @@ function compareQueuePosition(first: WorkItem, second: WorkItem): number {
     || first.id.localeCompare(second.id, undefined, { numeric: true });
 }
 
+function compareBacklogRanking(first: WorkItem, second: WorkItem): number {
+  const firstRanking = first.ranking ?? Number.MAX_SAFE_INTEGER;
+  const secondRanking = second.ranking ?? Number.MAX_SAFE_INTEGER;
+  return firstRanking - secondRanking || compareQueuePosition(first, second);
+}
+
 export function processingRateFor(stage: ActiveStage, day: number, config: ScenarioConfig): number {
   let rate = config.baseRates[stage] ?? 1;
   if (config.incident && config.incident.stage === stage && day >= config.incident.startDay && day <= config.incident.endDay) {
@@ -124,6 +130,7 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
       plannedEffortOverrides?: Partial<Record<ActiveStage, number>>;
       featureId?: string;
       featureTitle?: string;
+      ranking?: number;
       originatingPbiId?: string;
       feedbackDelayDays?: number;
     } = {},
@@ -144,6 +151,7 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
       initial,
       arrivedAt: day,
       positionId: positionRandom.next(),
+      ranking: options.ranking,
       stage: initialStage,
       status: "waiting",
       active: false,
@@ -232,6 +240,7 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
       plannedEffortOverrides,
       featureId: pbi.featureId,
       featureTitle: pbi.featureTitle,
+      ranking: pbi.ranking,
       originatingPbiId: pbi.id,
       feedbackDelayDays: delay,
     });
@@ -273,7 +282,9 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
   const admitBacklogWork = (day: number, pushAllowance: number, focus: Feature | undefined, dayConfig: ScenarioConfig) => {
     const entryItems = items
       .filter((item) => item.stage === entryStage && isFocused(item, focus))
-      .sort((a, b) => a.arrivedAt - b.arrivedAt || compareQueuePosition(a, b));
+      .sort((a, b) => dayConfig.backlogRanking
+        ? compareBacklogRanking(a, b)
+        : a.arrivedAt - b.arrivedAt || compareQueuePosition(a, b));
     const firstActive = active[0];
     const pullBased = firstActive !== undefined && dayConfig.wipLimits?.[firstActive] !== undefined;
     let remainingAdmissions = pullBased ? Number.POSITIVE_INFINITY : pushAllowance;
@@ -365,11 +376,11 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
 
   for (let index = 0; index < featureBacklog.featureCount; index += 1) {
     const ordinal = ++featureNumber;
-    const feature: Feature = { id: `FEATURE-${String(ordinal).padStart(3, "0")}`, title: `Feature ${String(ordinal).padStart(3, "0")}`, pbiIds: [], bugIds: [] };
+    const feature: Feature = { id: `FEATURE-${String(ordinal).padStart(3, "0")}`, title: `Feature ${String(ordinal).padStart(3, "0")}`, ranking: ordinal, pbiIds: [], bugIds: [] };
     features.push(feature);
     const pbiCount = featureBacklog.minPbisPerFeature + Math.floor(featureRandom.next() * (featureBacklog.maxPbisPerFeature - featureBacklog.minPbisPerFeature + 1));
     for (let pbiIndex = 0; pbiIndex < pbiCount; pbiIndex += 1) {
-      const pbi = createItem(0, "PBI", true, entryStage, { title: `${feature.title} · PBI ${pbiIndex + 1}`, featureId: feature.id, featureTitle: feature.title });
+      const pbi = createItem(0, "PBI", true, entryStage, { title: `${feature.title} · PBI ${pbiIndex + 1}`, featureId: feature.id, featureTitle: feature.title, ranking: feature.ranking });
       items.push(pbi);
       feature.pbiIds.push(pbi.id);
     }

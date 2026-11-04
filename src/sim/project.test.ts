@@ -51,6 +51,14 @@ describe("project files", () => {
     expect(phases[1].settings.baseRates).toEqual({ Development: 2, Test: 1 });
   });
 
+  it("adds backlog ranking to its selected phase profile", () => {
+    const phases = projectPhasesForPlan({ ...scenarios.baseline, horizonDays: 20 }, [
+      { id: "ranking", scenarioId: "ranking", durationDays: 20 },
+    ]);
+    expect(phases[0].label).toBe("Order backlog by ranking");
+    expect(phases[0].settings.backlogRanking).toBe(true);
+  });
+
   it("rejects a non-positive duration in an editable intervention plan", () => {
     expect(() => projectPhasesForPlan(scenarios.baseline, [{ id: "invalid", scenarioId: "baseline", durationDays: 0 }]))
       .toThrow("A phase duration must be a positive whole number.");

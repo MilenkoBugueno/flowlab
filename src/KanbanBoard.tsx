@@ -1,4 +1,5 @@
 import type { ItemTimelineState, SimulationResult, Stage, WorkItem } from "./sim/types";
+import { configForProjectDay } from "./sim/project";
 
 function stateAtDay(item: WorkItem, day: number): ItemTimelineState | undefined {
   for (let index = item.history.length - 1; index >= 0; index -= 1) {
@@ -17,7 +18,14 @@ interface Props {
   onSelectDay: (day: number) => void;
 }
 
-function compareCards(stage: Stage, first: { item: WorkItem }, second: { item: WorkItem }): number {
+function compareCards(stage: Stage, rankBacklog: boolean, first: { item: WorkItem }, second: { item: WorkItem }): number {
+  if (rankBacklog) {
+    const firstRanking = first.item.ranking ?? Number.MAX_SAFE_INTEGER;
+    const secondRanking = second.item.ranking ?? Number.MAX_SAFE_INTEGER;
+    return firstRanking - secondRanking
+      || first.item.positionId - second.item.positionId
+      || first.item.id.localeCompare(second.item.id, undefined, { numeric: true });
+  }
   return (first.item.enteredAt[stage] ?? first.item.arrivedAt) - (second.item.enteredAt[stage] ?? second.item.arrivedAt)
     || first.item.positionId - second.item.positionId
     || first.item.id.localeCompare(second.item.id, undefined, { numeric: true });
@@ -25,6 +33,7 @@ function compareCards(stage: Stage, first: { item: WorkItem }, second: { item: W
 
 export function KanbanBoard({ result, selectedDay, onSelectDay }: Props) {
   const stages = result.config.workflow.stages;
+  const rankBacklog = configForProjectDay(result.config, selectedDay).config.backlogRanking === true;
   const cardsByStage = new Map<Stage, Array<{ item: WorkItem; state: ItemTimelineState }>>(
     stages.map((stage) => [stage, []]),
   );
@@ -49,7 +58,7 @@ export function KanbanBoard({ result, selectedDay, onSelectDay }: Props) {
       </header>
       <div className="kanban-columns">
         {stages.map((stage) => {
-          const cards = (cardsByStage.get(stage) ?? []).sort((first, second) => compareCards(stage, first, second));
+          const cards = (cardsByStage.get(stage) ?? []).sort((first, second) => compareCards(stage, rankBacklog && stage === stages[0], first, second));
           return (
             <section className="kanban-column" key={stage} aria-label={`${stage}: ${cards.length} items`}>
               <h3>{stage}<small>{cards.length}</small></h3>
@@ -63,6 +72,7 @@ export function KanbanBoard({ result, selectedDay, onSelectDay }: Props) {
                       <div><dt>Active</dt><dd>{state.active ? "Yes" : "No"}</dd></div>
                       <div><dt>Progress</dt><dd>{state.progressPercent.toFixed(0)}%</dd></div>
                       {item.featureId && <div><dt>Feature</dt><dd>{item.featureTitle ?? item.featureId}</dd></div>}
+                      {item.ranking !== undefined && <div><dt>Ranking</dt><dd>{item.ranking}</dd></div>}
                       {item.originatingPbiId && <div><dt>Feedback for</dt><dd>{item.originatingPbiId}</dd></div>}
                       {item.feedbackDelayDays !== undefined && <div><dt>Delay</dt><dd>{item.feedbackDelayDays}d</dd></div>}
                       <div><dt>Start</dt><dd>{formatDay(state.startDate)}</dd></div>

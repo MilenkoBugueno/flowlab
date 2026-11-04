@@ -2,7 +2,7 @@ export type Stage = string;
 export type ActiveStage = string;
 export type ItemStatus = "waiting" | "active" | "blocked" | "done";
 export type WorkItemType = "PBI" | "Bug";
-export type ScenarioId = "baseline" | "swarm" | "wip" | "combined";
+export type ScenarioId = "baseline" | "swarm" | "wip" | "combined" | "ranking";
 
 export interface WorkflowConfig {
   stages: Stage[];
@@ -59,6 +59,7 @@ export interface PhaseSettings {
   serviceEffort: Partial<Record<ActiveStage, { min: number; max: number }>>;
   operatingAssumptions: Partial<Record<ActiveStage, OperatingAssumptions>>;
   wipLimits?: Partial<Record<Stage, number>>;
+  backlogRanking?: boolean;
   wipAssistanceEffectiveness: number;
   incident?: CapacityIncident;
   swarm?: SwarmPolicy;
@@ -76,6 +77,8 @@ export interface ProjectPhase {
 export interface Feature {
   id: string;
   title: string;
+  /** Ranking 1 is highest; assigned by Feature creation order. */
+  ranking: number;
   pbiIds: string[];
   bugIds: string[];
   /** Day on which the last PBI first entered the final active workflow stage. */
@@ -101,6 +104,8 @@ export interface ScenarioConfig {
   serviceEffort: Partial<Record<ActiveStage, { min: number; max: number }>>;
   operatingAssumptions?: Partial<Record<ActiveStage, OperatingAssumptions>>;
   wipLimits?: Partial<Record<Stage, number>>;
+  /** Order Backlog admissions by Feature ranking while this policy is active. */
+  backlogRanking?: boolean;
   wipAssistanceEffectiveness?: number;
   incident?: CapacityIncident;
   swarm?: SwarmPolicy;
@@ -116,6 +121,8 @@ export interface WorkItem {
   arrivedAt: number;
   /** Seeded random queue position assigned when the item is created. */
   positionId: number;
+  /** Inherited from a linked Feature; ranking 1 is highest. */
+  ranking?: number;
   stage: Stage;
   status: ItemStatus;
   active: boolean;

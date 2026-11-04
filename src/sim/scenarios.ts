@@ -54,6 +54,13 @@ export const scenarios: Record<ScenarioId, ScenarioConfig> = {
     wipLimits: { Development: 5, Integration: 5, Test: 5 },
     featureFocus: { startDay: 0 },
   },
+  ranking: {
+    id: "ranking",
+    label: "Order backlog by ranking",
+    summary: "Feature 001 ranks first, so its PBIs and feedback Bugs are admitted from Backlog before lower-ranked Feature work.",
+    ...common,
+    backlogRanking: true,
+  },
 };
 
 export const scenarioList = Object.values(scenarios);

@@ -456,6 +456,46 @@ describe("FlowLab simulation engine", () => {
     expect(result.snapshots[0].states.Backlog).toBe(4);
   });
 
+  it("admits ranked Feature backlog work before its random queue position", () => {
+    const config = {
+      ...scenarios.baseline,
+      horizonDays: 1,
+      warmupDays: 0,
+      arrivalRatePerDay: 0,
+      batchDays: [0],
+      batchSize: 1,
+      initialInventory: {},
+      featureBacklog: { featureCount: 3, minPbisPerFeature: 1, maxPbisPerFeature: 1, baseBugEffort: 1, feedbackDelayEffortFactor: 0 },
+    };
+    const firstAdmittedFeature = (result: ReturnType<typeof runScenario>) => result.items.find((item) => item.enteredAt.Development === 0)?.featureId;
+    const seed = Array.from({ length: 20 }, (_, index) => index + 1)
+      .find((candidate) => firstAdmittedFeature(runScenario(config, candidate)) !== "FEATURE-001");
+    expect(seed).toBeDefined();
+
+    const unranked = runScenario(config, seed as number);
+    const ranked = runScenario({ ...config, backlogRanking: true }, seed as number);
+    expect(firstAdmittedFeature(unranked)).not.toBe("FEATURE-001");
+    expect(firstAdmittedFeature(ranked)).toBe("FEATURE-001");
+    expect(ranked.features.map((feature) => feature.ranking)).toEqual([1, 2, 3]);
+    expect(ranked.items.filter((item) => item.featureId).every((item) => item.ranking === ranked.features.find((feature) => feature.id === item.featureId)?.ranking)).toBe(true);
+  });
+
+  it("pulls the highest-ranked Feature work first when Development is WIP-limited", () => {
+    const result = runScenario({
+      ...scenarios.wip,
+      horizonDays: 1,
+      warmupDays: 0,
+      arrivalRatePerDay: 0,
+      initialInventory: {},
+      featureBacklog: { featureCount: 3, minPbisPerFeature: 1, maxPbisPerFeature: 1, baseBugEffort: 1, feedbackDelayEffortFactor: 0 },
+      wipLimits: { Development: 1, Integration: 5, Test: 5 },
+      backlogRanking: true,
+    }, 42);
+
+    expect(result.items.find((item) => item.enteredAt.Development === 0)?.featureId).toBe("FEATURE-001");
+    expect(result.items.filter((item) => item.stage === "Backlog").every((item) => item.ranking === undefined || item.ranking > 1)).toBe(true);
+  });
+
   it("gates feature PBIs before Test and creates one delay-priced Bug for each tested PBI", () => {
     const result = runScenario({
       ...scenarios.baseline,
@@ -481,6 +521,8 @@ describe("FlowLab simulation engine", () => {
     const bugs = result.items.filter((item) => feature.bugIds.includes(item.id));
     expect(bugs).toHaveLength(3);
     expect(bugs.every((bug) => bug.originatingPbiId && feature.pbiIds.includes(bug.originatingPbiId))).toBe(true);
+    expect(feature.ranking).toBe(1);
+    expect([...pbis, ...bugs].every((item) => item.ranking === feature.ranking)).toBe(true);
     expect(bugs.map((bug) => bug.plannedEffort.Development).sort()).toEqual([1.2, 1.2, 1.2]);
     expect(feature.handoffAt).toBe(Math.max(...testEntries.map((event) => event.day)));
     expect(feature.completedAt).toBeDefined();

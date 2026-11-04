@@ -31,6 +31,7 @@ export function phaseSettingsFor(config: ScenarioConfig): PhaseSettings {
     serviceEffort: clone(config.serviceEffort),
     operatingAssumptions: clone(config.operatingAssumptions ?? {}),
     wipLimits: config.wipLimits && clone(config.wipLimits),
+    backlogRanking: config.backlogRanking,
     wipAssistanceEffectiveness: config.wipAssistanceEffectiveness ?? 0.75,
     incident: config.incident && clone(config.incident),
     swarm: config.swarm && clone(config.swarm),
@@ -67,6 +68,7 @@ export function projectPhasesForPlan(header: ScenarioConfig, plan: PhasePlanEntr
 function configForPhaseProfile(header: ScenarioConfig, scenarioId: ScenarioId): ScenarioConfig {
   const usesWipLimits = scenarioId === "wip" || scenarioId === "combined";
   const usesFinishingFocus = scenarioId === "swarm" || scenarioId === "combined";
+  const usesBacklogRanking = scenarioId === "ranking";
   const defaultWipLimits = Object.fromEntries(
     header.workflow.stages.slice(1, -1).map((stage) => [stage, 5]),
   );
@@ -74,6 +76,7 @@ function configForPhaseProfile(header: ScenarioConfig, scenarioId: ScenarioId): 
     ...header,
     wipLimits: usesWipLimits ? header.wipLimits ?? defaultWipLimits : undefined,
     featureFocus: usesFinishingFocus ? { startDay: 0 } : undefined,
+    backlogRanking: usesBacklogRanking,
     incident: undefined,
     swarm: undefined,
   };
@@ -145,6 +148,7 @@ function validatePhaseSettings(header: ScenarioConfig, phase: ProjectPhase): Pro
     baseRates: phase.settings.baseRates,
     operatingAssumptions: phase.settings.operatingAssumptions,
     wipAssistanceEffectiveness: phase.settings.wipAssistanceEffectiveness,
+    backlogRanking: phase.settings.backlogRanking,
     featureFocus: phase.settings.featureFocus ?? null,
     incident: phase.settings.incident,
     swarm: phase.settings.swarm,

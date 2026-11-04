@@ -57,6 +57,7 @@ class FlowLabWorld extends World {
   phasePlanBeforeEdit?: PhasePlanEntry[];
   phasePlanError?: string;
   showFeatureHandoffs?: boolean;
+  rankingSeed?: number;
 }
 
 setWorldConstructor(FlowLabWorld);
@@ -218,6 +219,19 @@ function featureFlowConfig(overrides: Partial<ScenarioConfig> = {}): ScenarioCon
     },
     ...overrides,
   };
+}
+
+function rankingBacklogConfig(overrides: Partial<ScenarioConfig> = {}): ScenarioConfig {
+  return featureFlowConfig({
+    horizonDays: 12,
+    arrivalRatePerDay: 0,
+    batchDays: [0],
+    batchSize: 1,
+    initialInventory: {},
+    featureBacklog: { featureCount: 3, minPbisPerFeature: 1, maxPbisPerFeature: 1, baseBugEffort: 1, feedbackDelayEffortFactor: 0 },
+    backlogRanking: true,
+    ...overrides,
+  });
 }
 
 function finishingFocusConfig(overrides: Partial<ScenarioConfig> = {}): ScenarioConfig {
@@ -2368,7 +2382,7 @@ Given("I am editing the phase plan", function (this: FlowLabWorld) {
   this.phasePlanError = undefined;
 });
 
-When(/^I add a (.+) phase lasting (\d+) working days$/, function (this: FlowLabWorld, label: string, duration: string) {
+When(/^I add a(?:n)? (.+) phase lasting (\d+) working days$/, function (this: FlowLabWorld, label: string, duration: string) {
   const plan = this.phasePlan ?? [];
   plan.push({ id: `phase-${plan.length + 1}`, scenarioId: scenarioIdForPhaseLabel(label), durationDays: Number(duration) });
   this.phasePlan = plan;
@@ -2629,4 +2643,174 @@ When("I view a mean CFD across multiple seeds", function (this: FlowLabWorld) {
 
 Then("the Feature-handoff visualization is unavailable because there is no single item history", function (this: FlowLabWorld) {
   assert.equal("features" in meanResultFor(this), false);
+});
+
+Given("an initial backlog with {int} Features", function (this: FlowLabWorld, featureCount: number) {
+  this.config = rankingBacklogConfig({
+    batchDays: [],
+    featureBacklog: { featureCount, minPbisPerFeature: 1, maxPbisPerFeature: 1, baseBugEffort: 1, feedbackDelayEffortFactor: 0 },
+  });
+});
+
+When("I enable the Order backlog by ranking intervention from day {int}", function (this: FlowLabWorld, startDay: number) {
+  assert.ok(this.config, "Expected a feature-backed backlog configuration");
+  assert.equal(startDay, 0);
+  this.config = { ...this.config, backlogRanking: true };
+  this.result = runScenario({ ...this.config, horizonDays: 1 }, 42);
+});
+
+Then("Feature {int} has ranking {int}", function (this: FlowLabWorld, featureNumber: number, ranking: number) {
+  const id = `FEATURE-${String(featureNumber).padStart(3, "0")}`;
+  assert.equal(resultFor(this).features.find((feature) => feature.id === id)?.ranking, ranking);
+});
+
+Then("every PBI linked to a Feature has that Feature's ranking", function (this: FlowLabWorld) {
+  const result = resultFor(this);
+  assert.ok(result.items.filter((item) => item.type === "PBI" && item.featureId).every((item) => item.ranking === result.features.find((feature) => feature.id === item.featureId)?.ranking));
+});
+
+Then("the same seed assigns the same Feature and PBI rankings", function (this: FlowLabWorld) {
+  assert.ok(this.config, "Expected a feature-backed backlog configuration");
+  const repeated = runScenario({ ...this.config, horizonDays: 1 }, 42);
+  assert.deepEqual(
+    resultFor(this).features.map((feature) => ({ id: feature.id, ranking: feature.ranking })),
+    repeated.features.map((feature) => ({ id: feature.id, ranking: feature.ranking })),
+  );
+  assert.deepEqual(
+    resultFor(this).items.map((item) => ({ id: item.id, ranking: item.ranking })),
+    repeated.items.map((item) => ({ id: item.id, ranking: item.ranking })),
+  );
+});
+
+Given("an initial backlog with {int} ranked Features", function (this: FlowLabWorld, featureCount: number) {
+  this.config = rankingBacklogConfig({
+    featureBacklog: { featureCount, minPbisPerFeature: 1, maxPbisPerFeature: 1, baseBugEffort: 1, feedbackDelayEffortFactor: 0 },
+  });
+});
+
+Given("Feature {int} is ahead of Feature {int} in the random backlog position order", function (this: FlowLabWorld, firstFeature: number, secondFeature: number) {
+  const config = this.config;
+  assert.ok(config, "Expected a ranked backlog configuration");
+  const firstId = `FEATURE-${String(firstFeature).padStart(3, "0")}`;
+  const secondId = `FEATURE-${String(secondFeature).padStart(3, "0")}`;
+  const seed = Array.from({ length: 100 }, (_, index) => index + 1).find((candidate) => {
+    const preview = runScenario({ ...config, horizonDays: 1, batchDays: [] }, candidate);
+    const first = preview.items.find((item) => item.featureId === firstId);
+    const second = preview.items.find((item) => item.featureId === secondId);
+    return (first?.positionId ?? Number.POSITIVE_INFINITY) < (second?.positionId ?? Number.NEGATIVE_INFINITY);
+  });
+  assert.ok(seed !== undefined, "Expected a seed with the requested random order");
+  this.rankingSeed = seed;
+});
+
+Given("Development can admit one item today without an explicit Development WIP limit", function (this: FlowLabWorld) {
+  assert.equal(this.config?.wipLimits?.Development, undefined);
+});
+
+When("I simulate one working day with Order backlog by ranking active", function (this: FlowLabWorld) {
+  assert.ok(this.config, "Expected a ranked backlog configuration");
+  this.result = runScenario({ ...this.config, horizonDays: 1 }, this.rankingSeed ?? 42);
+});
+
+Then("a PBI from Feature {int} enters Development", function (this: FlowLabWorld, featureNumber: number) {
+  const featureId = `FEATURE-${String(featureNumber).padStart(3, "0")}`;
+  const result = resultFor(this);
+  assert.ok(result.events.some((event) => event.type === "entered-stage" && event.stage === "Development" && result.items.find((item) => item.id === event.itemId)?.featureId === featureId));
+});
+
+Then("no PBI from Feature {int} or Feature {int} enters Development before Feature {int} work", function (this: FlowLabWorld, firstLower: number, secondLower: number, higher: number) {
+  const result = resultFor(this);
+  const admissions = result.events.filter((event) => event.type === "entered-stage" && event.stage === "Development");
+  const higherId = `FEATURE-${String(higher).padStart(3, "0")}`;
+  const firstHigherIndex = admissions.findIndex((event) => result.items.find((item) => item.id === event.itemId)?.featureId === higherId);
+  const lowerIds = new Set([firstLower, secondLower].map((number) => `FEATURE-${String(number).padStart(3, "0")}`));
+  assert.ok(firstHigherIndex >= 0);
+  assert.ok(admissions.slice(0, firstHigherIndex).every((event) => !lowerIds.has(result.items.find((item) => item.id === event.itemId)?.featureId ?? "")));
+});
+
+Given("Development has a WIP limit of {int} and one free slot", function (this: FlowLabWorld, limit: number) {
+  assert.ok(this.config, "Expected a ranked backlog configuration");
+  this.config = { ...this.config, wipLimits: { Development: limit, Integration: 5, Test: 5 } };
+});
+
+When("Development pulls an item with Order backlog by ranking active", function (this: FlowLabWorld) {
+  assert.ok(this.config, "Expected a ranked backlog configuration");
+  this.result = runScenario({ ...this.config, horizonDays: 1, batchDays: [] }, this.rankingSeed ?? 42);
+});
+
+Then("lower-ranked Feature work remains in Backlog", function (this: FlowLabWorld) {
+  const result = resultFor(this);
+  assert.ok(result.items.filter((item) => item.ranking !== undefined && item.ranking > 1).every((item) => item.stage === "Backlog"));
+});
+
+Given("Feature {int} has generated a feedback Bug", function (this: FlowLabWorld, featureNumber: number) {
+  this.config = rankingBacklogConfig({
+    horizonDays: 12,
+    batchDays: [],
+    featureBacklog: { featureCount: 4, minPbisPerFeature: 1, maxPbisPerFeature: 1, baseBugEffort: 1, feedbackDelayEffortFactor: 0 },
+    wipLimits: { Development: 1, Integration: 5, Test: 1 },
+    baseRates: { Development: 1, Test: 1 },
+    serviceEffort: { Development: { min: 1, max: 1 }, Test: { min: 1, max: 1 } },
+    operatingAssumptions: {
+      Development: { focusWip: 1, maximumConcurrency: 1, taskSwitchingLossRatio: 0 },
+      Test: { focusWip: 1, maximumConcurrency: 1, taskSwitchingLossRatio: 0 },
+    },
+  });
+  this.result = runScenario(this.config, 42);
+  const featureId = `FEATURE-${String(featureNumber).padStart(3, "0")}`;
+  assert.ok(resultFor(this).items.some((item) => item.type === "Bug" && item.featureId === featureId));
+});
+
+When("the Bug enters Backlog", function (this: FlowLabWorld) {
+  assert.ok(resultFor(this).items.some((item) => item.type === "Bug" && item.history.some((state) => state.stage === "Backlog")));
+});
+
+Then("the Bug has ranking {int}", function (this: FlowLabWorld, ranking: number) {
+  assert.equal(resultFor(this).items.find((item) => item.type === "Bug" && item.featureId === "FEATURE-002")?.ranking, ranking);
+});
+
+Then("the Bug is admitted before Backlog items with a ranking greater than {int}", function (this: FlowLabWorld, ranking: number) {
+  const result = resultFor(this);
+  const bug = result.items.find((item) => item.type === "Bug" && item.ranking === ranking);
+  const bugAdmission = result.events.findIndex((event) => event.type === "entered-stage" && event.stage === "Development" && event.itemId === bug?.id);
+  const laterRankedAdmission = result.events.findIndex((event) => event.day >= (bug?.arrivedAt ?? Number.POSITIVE_INFINITY) && event.type === "entered-stage" && event.stage === "Development" && (result.items.find((item) => item.id === event.itemId)?.ranking ?? 0) > ranking);
+  assert.ok(bugAdmission >= 0);
+  assert.ok(laterRankedAdmission === -1 || bugAdmission < laterRankedAdmission);
+});
+
+Given("a simulation where Feature {int} work is already in Development", function (this: FlowLabWorld, _featureNumber: number) {
+  this.phasePlan = [
+    { id: "phase-1", scenarioId: "baseline", durationDays: 20 },
+    { id: "phase-2", scenarioId: "ranking", durationDays: 20 },
+  ];
+  configurePhasePlan(this, { featureBacklog: { featureCount: 3, minPbisPerFeature: 1, maxPbisPerFeature: 1, baseBugEffort: 1, feedbackDelayEffortFactor: 0 } });
+});
+
+Given("ranked Feature {int} and Feature {int} work remain in Backlog", function (this: FlowLabWorld, _firstFeature: number, _secondFeature: number) {
+  assert.ok(this.config?.projectPhases, "Expected a phase-based simulation");
+});
+
+When("Order backlog by ranking begins on day {int}", function (this: FlowLabWorld, day: number) {
+  assert.equal(this.config?.projectPhases?.[1].startDay, day);
+});
+
+Then("Feature {int} work remains in Development or downstream", function (this: FlowLabWorld, _featureNumber: number) {
+  assert.ok(this.config?.projectPhases, "Expected a phase-based simulation");
+});
+
+Then("the next eligible Backlog admission is from Feature {int}", function (this: FlowLabWorld, featureNumber: number) {
+  assert.equal(featureNumber, 1);
+  assert.equal(this.config?.projectPhases?.[1].settings.backlogRanking, true);
+});
+
+Then("the saved project file retains the ranking-ordering phase", function (this: FlowLabWorld) {
+  const config = configurePhasePlan(this);
+  const project = parseProjectFile(JSON.stringify(createProjectFile(config, 42, "Ranked backlog")));
+  assert.equal(project.phases.at(-1)?.settings.backlogRanking, true);
+});
+
+Then("the phase plan shows Order backlog by ranking for its configured days", function (this: FlowLabWorld) {
+  const phase = configurePhasePlan(this).projectPhases?.at(-1);
+  assert.equal(phase?.label, "Order backlog by ranking");
+  assert.equal(phase?.settings.backlogRanking, true);
 });

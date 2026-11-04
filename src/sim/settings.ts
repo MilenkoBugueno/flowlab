@@ -85,6 +85,11 @@ export function validateWipAssistanceEffectiveness(effectiveness: number): numbe
   return effectiveness;
 }
 
+export function validateBacklogRanking(enabled: boolean): boolean {
+  if (typeof enabled !== "boolean") throw new Error("Backlog ranking must be enabled or disabled.");
+  return enabled;
+}
+
 export function validateOperatingAssumptions(assumptions: OperatingAssumptions): OperatingAssumptions {
   if (!Number.isInteger(assumptions.focusWip) || assumptions.focusWip < 1) {
     throw new Error("Focus WIP must be a positive whole number.");
@@ -140,6 +145,7 @@ export interface SimulationSettings {
   initialInventory?: InitialInventory;
   featureBacklog?: FeatureBacklogConfig;
   featureFocus?: FeatureFocusPolicy | null;
+  backlogRanking?: boolean;
   wipAssistanceEffectiveness?: number;
   operatingAssumptions?: Partial<Record<ActiveStage, OperatingAssumptions>>;
   baseRates?: Partial<Record<ActiveStage, number>>;
@@ -165,6 +171,9 @@ export function withSimulationSettings(config: ScenarioConfig, settings: Simulat
     : settings.featureFocus === null
       ? undefined
       : validateFeatureFocus(withArrival, settings.featureFocus);
+  const backlogRanking = settings.backlogRanking === undefined
+    ? withArrival.backlogRanking
+    : validateBacklogRanking(settings.backlogRanking);
   const withRates = withProcessingRates(withArrival, settings.baseRates ?? {});
   const wipAssistanceEffectiveness = settings.wipAssistanceEffectiveness === undefined
     ? (withRates.wipAssistanceEffectiveness ?? 0.75)
@@ -176,5 +185,5 @@ export function withSimulationSettings(config: ScenarioConfig, settings: Simulat
     : withOperating.incident;
   const swarm = settings.swarm ?? withOperating.swarm;
   if (swarm && active.length >= 2) validateSwarm(withOperating, swarm);
-  return { ...withOperating, initialBacklog, initialInventory, featureBacklog, featureFocus, wipAssistanceEffectiveness, incident, swarm: active.length >= 2 ? swarm : undefined };
+  return { ...withOperating, initialBacklog, initialInventory, featureBacklog, featureFocus, backlogRanking, wipAssistanceEffectiveness, incident, swarm: active.length >= 2 ? swarm : undefined };
 }
