@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { Given, Then, When, World, setWorldConstructor } from "@cucumber/cucumber";
 import { effectiveCapacityFor, feedbackBugEffortFor, processingRateFor, runScenario } from "../../src/sim/engine";
 import { runMeanScenario, validateMeanSeedCount } from "../../src/sim/mean";
-import { configFromProjectFile, createProjectFile, parseProjectFile, phasePlanFromProject, phaseSettingsFor, projectPhasesForPlan } from "../../src/sim/project";
-import type { PhasePlanEntry, ProjectFile } from "../../src/sim/project";
+import { configForProjectDay, configFromProjectFile, createProjectFile, noPhaseInterventions, parseProjectFile, phaseInterventionsForEntry, phasePlanFromProject, phaseSettingsFor, projectPhasesForPlan } from "../../src/sim/project";
+import type { PhaseInterventions, PhasePlanEntry, ProjectFile } from "../../src/sim/project";
 import { scenarios } from "../../src/sim/scenarios";
 import { validateOperatingAssumptions, withOperatingAssumptions, withProcessingRates, withSimulationSettings } from "../../src/sim/settings";
 import type { CapacityIncident, FeatureBacklogConfig, InitialBacklog, InitialInventory, ItemTimelineState, MeanSimulationResult, OperatingAssumptions, ProjectPhase, ScenarioConfig, ScenarioId, SimulationResult, SwarmPolicy, WorkItem } from "../../src/sim/types";
@@ -2545,6 +2545,203 @@ Then("the phase plan retains the same intervention order and durations", functio
 
 Then("the loaded project has a {int}-working-day simulation horizon", function (this: FlowLabWorld, horizon: number) {
   assert.equal(this.config?.horizonDays, horizon);
+});
+
+function composedInterventions(overrides: Partial<PhaseInterventions> = {}): PhaseInterventions {
+  return { ...noPhaseInterventions(), ...overrides };
+}
+
+function currentPlanEntry(world: FlowLabWorld): PhasePlanEntry {
+  const entry = world.phasePlan?.at(-1);
+  assert.ok(entry, "Expected a phase in the editable plan");
+  return entry;
+}
+
+function setCurrentPlanIntervention(world: FlowLabWorld, intervention: keyof PhaseInterventions, enabled: boolean) {
+  const entry = currentPlanEntry(world);
+  world.phasePlan = (world.phasePlan ?? []).map((phase) => phase.id === entry.id
+    ? { ...phase, scenarioId: undefined, interventions: { ...phaseInterventionsForEntry(phase), [intervention]: enabled } }
+    : phase);
+}
+
+function configureComposedPhase(world: FlowLabWorld, interventions: PhaseInterventions, durationDays = 12) {
+  world.phasePlan = [{ id: "mixed-phase", durationDays, interventions }];
+  return configurePhasePlan(world, {
+    arrivalRatePerDay: 100,
+    batchDays: [],
+    batchSize: 0,
+    featureBacklog: { featureCount: 3, minPbisPerFeature: 2, maxPbisPerFeature: 2, baseBugEffort: 1, feedbackDelayEffortFactor: 0 },
+    wipLimits: { Development: 2, Integration: 2, Test: 1 },
+    baseRates: { Development: 2, Test: 0.5 },
+    serviceEffort: { Development: { min: 1, max: 1 }, Test: { min: 4, max: 4 } },
+    operatingAssumptions: {
+      Development: { focusWip: 2, maximumConcurrency: 2, taskSwitchingLossRatio: 0 },
+      Test: { focusWip: 1, maximumConcurrency: 1, taskSwitchingLossRatio: 0 },
+    },
+  });
+}
+
+When("I add a phase lasting {int} working days", function (this: FlowLabWorld, durationDays: number) {
+  const plan = this.phasePlan ?? [];
+  plan.push({ id: `phase-${plan.length + 1}`, durationDays, interventions: noPhaseInterventions() });
+  this.phasePlan = plan;
+  configurePhasePlan(this);
+});
+
+When("I enable WIP limits for that phase", function (this: FlowLabWorld) {
+  setCurrentPlanIntervention(this, "wipLimits", true);
+});
+
+When("I enable Stop starting, start finishing for that phase", function (this: FlowLabWorld) {
+  setCurrentPlanIntervention(this, "featureFocus", true);
+});
+
+When("I enable Order backlog by ranking for that phase", function (this: FlowLabWorld) {
+  setCurrentPlanIntervention(this, "backlogRanking", true);
+});
+
+Then("the phase lists WIP limits, Stop starting, start finishing, and Order backlog by ranking", function (this: FlowLabWorld) {
+  assert.deepEqual(phaseInterventionsForEntry(currentPlanEntry(this)), composedInterventions({ wipLimits: true, featureFocus: true, backlogRanking: true }));
+});
+
+Then("its settings retain the configured WIP limits", function (this: FlowLabWorld) {
+  assert.deepEqual(configurePhasePlan(this).projectPhases?.[0].settings.wipLimits, { Development: 5, Integration: 5, Test: 5 });
+});
+
+Then("its settings enable Feature finishing focus from the phase's first day", function (this: FlowLabWorld) {
+  assert.deepEqual(configurePhasePlan(this).projectPhases?.[0].settings.featureFocus, { startDay: 0 });
+});
+
+Then("its settings enable backlog ranking", function (this: FlowLabWorld) {
+  assert.equal(configurePhasePlan(this).projectPhases?.[0].settings.backlogRanking, true);
+});
+
+Given("a phase with WIP limits, Stop starting, start finishing, and Order backlog by ranking", function (this: FlowLabWorld) {
+  configureComposedPhase(this, composedInterventions({ wipLimits: true, featureFocus: true, backlogRanking: true }));
+});
+
+Given("the Backlog contains ranked work for more than one unfinished Feature", function (this: FlowLabWorld) {
+  assert.ok((this.config?.featureBacklog?.featureCount ?? 0) > 1);
+  assert.equal(this.config?.projectPhases?.[0].settings.backlogRanking, true);
+});
+
+When("I simulate the phase", function (this: FlowLabWorld) {
+  assert.ok(this.config, "Expected a composed phase configuration");
+  this.result = runScenario(this.config, 42);
+});
+
+Then("Development, Integration, and Test respect their configured WIP limits", function (this: FlowLabWorld) {
+  const limits = resultFor(this).config.projectPhases?.[0].settings.wipLimits;
+  assert.ok(limits, "Expected WIP limits");
+  for (const snapshot of resultFor(this).snapshots) {
+    for (const stage of ["Development", "Integration", "Test"]) assert.ok(snapshot.states[stage] <= (limits[stage] ?? Infinity));
+  }
+});
+
+Then("only the current finishing Feature is admitted from Backlog", function (this: FlowLabWorld) {
+  const result = resultFor(this);
+  for (const event of result.events.filter((candidate) => candidate.type === "entered-stage" && candidate.stage === "Development")) {
+    const item = result.items.find((candidate) => candidate.id === event.itemId);
+    assert.equal(item?.featureId, result.dailyLog[event.day].featureFocus?.id);
+  }
+});
+
+Then("its lower-ranked Backlog work is selected before any other eligible work for that Feature", function (this: FlowLabWorld) {
+  const rankings = resultFor(this).events
+    .filter((event) => event.type === "entered-stage" && event.stage === "Development")
+    .map((event) => resultFor(this).items.find((item) => item.id === event.itemId)?.ranking ?? Infinity);
+  assert.ok(rankings.every((ranking, index) => index === 0 || ranking >= rankings[index - 1]));
+});
+
+Then("unused Development capacity may assist the focused Feature in Test", function (this: FlowLabWorld) {
+  assert.ok(resultFor(this).snapshots.some((snapshot) => snapshot.capacityAssistance?.some((assistance) => assistance.reason === "completion-focus" && assistance.from === "Development" && assistance.to === "Test")));
+});
+
+Given("a phase with WIP limits and Order backlog by ranking", function (this: FlowLabWorld) {
+  configureComposedPhase(this, composedInterventions({ wipLimits: true, backlogRanking: true }), 6);
+});
+
+Given("Stop starting, start finishing is disabled for that phase", function (this: FlowLabWorld) {
+  assert.equal(phaseInterventionsForEntry(currentPlanEntry(this)).featureFocus, false);
+});
+
+When("Development has a free WIP slot", function (this: FlowLabWorld) {
+  assert.ok(this.config, "Expected a composed phase configuration");
+  this.result = runScenario(this.config, 42);
+});
+
+Then("the highest-ranked eligible Backlog item is pulled into Development", function (this: FlowLabWorld) {
+  const result = resultFor(this);
+  const firstAdmission = result.events.find((event) => event.type === "entered-stage" && event.stage === "Development");
+  assert.equal(result.items.find((item) => item.id === firstAdmission?.itemId)?.ranking, 1);
+});
+
+Then("more than one Feature may have active work", function (this: FlowLabWorld) {
+  const admittedFeatures = new Set(resultFor(this).events
+    .filter((event) => event.type === "entered-stage" && event.stage === "Development")
+    .map((event) => resultFor(this).items.find((item) => item.id === event.itemId)?.featureId));
+  assert.ok(admittedFeatures.size > 1);
+});
+
+Given("a 20-day phase with WIP limits, Stop starting, start finishing, and Order backlog by ranking", function (this: FlowLabWorld) {
+  this.phasePlan = [{ id: "mixed-one", durationDays: 20, interventions: composedInterventions({ wipLimits: true, featureFocus: true, backlogRanking: true }) }];
+});
+
+Given("it is followed by a 20-day phase with WIP limits and Order backlog by ranking only", function (this: FlowLabWorld) {
+  this.phasePlan = [...(this.phasePlan ?? []), { id: "mixed-two", durationDays: 20, interventions: composedInterventions({ wipLimits: true, backlogRanking: true }) }];
+  configurePhasePlan(this, {
+    featureBacklog: { featureCount: 3, minPbisPerFeature: 2, maxPbisPerFeature: 2, baseBugEffort: 1, feedbackDelayEffortFactor: 0 },
+    wipLimits: { Development: 2, Integration: 2, Test: 1 },
+    baseRates: { Development: 0.1, Test: 0.1 },
+    serviceEffort: { Development: { min: 10, max: 10 }, Test: { min: 10, max: 10 } },
+  });
+});
+
+When("day 20 begins", function (this: FlowLabWorld) {
+  assert.ok(this.config, "Expected a two-phase configuration");
+  this.result = runScenario(this.config, 42);
+});
+
+Then("WIP limits remain active", function (this: FlowLabWorld) {
+  assert.ok(configForProjectDay(resultFor(this).config, 20).config.wipLimits);
+});
+
+Then("Backlog remains ordered by ranking", function (this: FlowLabWorld) {
+  assert.equal(configForProjectDay(resultFor(this).config, 20).config.backlogRanking, true);
+});
+
+Then("Stop starting, start finishing no longer restricts admission", function (this: FlowLabWorld) {
+  assert.equal(configForProjectDay(resultFor(this).config, 20).config.featureFocus, undefined);
+});
+
+Then("work already present in the workflow remains in its simulated stage", function (this: FlowLabWorld) {
+  const result = resultFor(this);
+  assert.ok(result.items.some((item) => item.stage !== "Backlog" && item.stage !== "Done"));
+});
+
+Then("WIP limits remain enabled for that phase", function (this: FlowLabWorld) {
+  assert.equal(phaseInterventionsForEntry(currentPlanEntry(this)).wipLimits, true);
+});
+
+Then("Order backlog by ranking remains enabled for that phase", function (this: FlowLabWorld) {
+  assert.equal(phaseInterventionsForEntry(currentPlanEntry(this)).backlogRanking, true);
+});
+
+Then("the phase contains all three policies", function (this: FlowLabWorld) {
+  assert.deepEqual(phaseInterventionsForEntry(currentPlanEntry(this)), composedInterventions({ wipLimits: true, featureFocus: true, backlogRanking: true }));
+});
+
+Then("the loaded phase retains all enabled policies and its duration", function (this: FlowLabWorld) {
+  assert.deepEqual(phaseInterventionsForEntry(currentPlanEntry(this)), composedInterventions({ wipLimits: true, featureFocus: true, backlogRanking: true }));
+  assert.equal(currentPlanEntry(this).durationDays, 12);
+});
+
+Then("the same project file and seed reproduce the same snapshots and item histories", function (this: FlowLabWorld) {
+  assert.ok(this.projectFile, "Expected a saved project file");
+  const first = runScenario(configFromProjectFile(this.projectFile), this.projectFile.seed);
+  const second = runScenario(configFromProjectFile(this.projectFile), this.projectFile.seed);
+  assert.deepEqual(second.snapshots, first.snapshots);
+  assert.deepEqual(second.items.map((item) => item.history), first.items.map((item) => item.history));
 });
 
 Given("a seeded simulation with a Feature whose PBIs are ready for Test", function (this: FlowLabWorld) {

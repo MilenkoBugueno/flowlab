@@ -1,4 +1,4 @@
-import type { ItemTimelineState, SimulationResult, Stage, WorkItem } from "./sim/types";
+import type { DailyMovement, ItemTimelineState, SimulationResult, Stage, WorkItem } from "./sim/types";
 import { configForProjectDay } from "./sim/project";
 
 function stateAtDay(item: WorkItem, day: number): ItemTimelineState | undefined {
@@ -10,6 +10,14 @@ function stateAtDay(item: WorkItem, day: number): ItemTimelineState | undefined 
 
 function formatDay(day: number | undefined): string {
   return day === undefined ? "—" : `Day ${day}`;
+}
+
+function formatCapacity(value: number): string {
+  return Number.isInteger(value) ? String(value) : value.toFixed(2);
+}
+
+function movementCount(movements: DailyMovement[], from: string, to: string): number {
+  return movements.find((movement) => movement.from === from && movement.to === to)?.count ?? 0;
 }
 
 interface Props {
@@ -33,7 +41,25 @@ function compareCards(stage: Stage, rankBacklog: boolean, first: { item: WorkIte
 
 export function KanbanBoard({ result, selectedDay, onSelectDay }: Props) {
   const stages = result.config.workflow.stages;
-  const rankBacklog = configForProjectDay(result.config, selectedDay).config.backlogRanking === true;
+  const { config: dayConfig, phase } = configForProjectDay(result.config, selectedDay);
+  const rankBacklog = dayConfig.backlogRanking === true;
+  const snapshot = result.snapshots[selectedDay];
+  const dailyLog = result.dailyLog[selectedDay];
+  const movements = dailyLog?.movements ?? [];
+  const stageChanges = movements.reduce((total, movement) => total + (movement.from === "External" ? 0 : movement.count), 0);
+  const externalArrivals = movementCount(movements, "External", stages[0]);
+  const activeInterventions = [
+    dayConfig.wipLimits && `WIP limits (${Object.entries(dayConfig.wipLimits).map(([stage, limit]) => `${stage}: ${limit}`).join(" · ")})`,
+    dayConfig.featureFocus && `Stop starting, start finishing${dailyLog?.featureFocus ? ` · ${dailyLog.featureFocus.title}` : ""}`,
+    dayConfig.backlogRanking && "Order backlog by ranking",
+    dayConfig.incident && selectedDay >= dayConfig.incident.startDay && selectedDay <= dayConfig.incident.endDay
+      && `Capacity incident · ${dayConfig.incident.stage}: ${formatCapacity(dayConfig.incident.ratePerDay)}/day`,
+    dayConfig.swarm && selectedDay >= dayConfig.swarm.startDay && selectedDay < dayConfig.swarm.startDay + dayConfig.swarm.durationDays
+      && `Swarm · ${dayConfig.swarm.sourceStage} → ${dayConfig.swarm.targetStage}`,
+  ].filter((intervention): intervention is string => Boolean(intervention));
+  const capacityByStage = new Map((snapshot?.operatingCapacity ?? []).map((capacity) => [capacity.stage, capacity]));
+  const totalTaskSwitchingLoss = (snapshot?.operatingCapacity ?? []).reduce((total, capacity) => total + capacity.taskSwitchingLoss, 0);
+  const assistance = snapshot?.capacityAssistance ?? [];
   const cardsByStage = new Map<Stage, Array<{ item: WorkItem; state: ItemTimelineState }>>(
     stages.map((stage) => [stage, []]),
   );
@@ -56,6 +82,51 @@ export function KanbanBoard({ result, selectedDay, onSelectDay }: Props) {
         </div>
         <p>Items created after this day are not shown.</p>
       </header>
+      <section className="kanban-day-summary" aria-labelledby="kanban-day-summary-title">
+        <div className="kanban-summary-heading">
+          <p className="eyebrow">Daily summary</p>
+          <h3 id="kanban-day-summary-title">What happened on Day {selectedDay}</h3>
+        </div>
+        <article className="kanban-summary-card interventions-summary">
+          <h4>Active interventions</h4>
+          {activeInterventions.length ? <ul>{activeInterventions.map((intervention) => <li key={intervention}>{intervention}</li>)}</ul> : <p>Baseline flow</p>}
+          {phase && <small>Phase: {phase.label}</small>}
+        </article>
+        <article className="kanban-summary-card flow-summary">
+          <h4>Today’s flow</h4>
+          <dl>
+            <div><dt>Stage changes</dt><dd>{stageChanges}</dd></div>
+            <div><dt>New arrivals</dt><dd>{externalArrivals}</dd></div>
+            <div><dt>Completed</dt><dd>{snapshot?.completions ?? 0}</dd></div>
+            <div><dt>Task-switch loss</dt><dd>{formatCapacity(totalTaskSwitchingLoss)}</dd></div>
+          </dl>
+          {movements.some((movement) => movement.count > 0) && <p className="kanban-movements">{movements.filter((movement) => movement.count > 0).map((movement) => `${movement.from} → ${movement.to}: ${movement.count}`).join(" · ")}</p>}
+        </article>
+        <article className="kanban-summary-card capacity-summary">
+          <h4>Stage capacity</h4>
+          <div className="kanban-capacity-table-wrap">
+            <table>
+              <thead><tr><th>Stage</th><th>Base</th><th>Effective</th><th>Active</th><th>Switch loss</th></tr></thead>
+              <tbody>
+                {stages.map((stage) => {
+                  const capacity = capacityByStage.get(stage);
+                  return <tr key={stage}>
+                    <th scope="row">{stage}</th>
+                    {capacity ? <>
+                      <td>{formatCapacity(capacity.baseCapacity)}</td>
+                      <td>{formatCapacity(capacity.effectiveCapacity)}</td>
+                      <td>{capacity.concurrentItems}</td>
+                      <td>{formatCapacity(capacity.taskSwitchingLoss)}</td>
+                    </> : <td colSpan={4}>—</td>}
+                  </tr>;
+                })}
+              </tbody>
+            </table>
+          </div>
+          <p>— marks an entry, handoff, or completed stage without processing capacity.</p>
+          {assistance.length > 0 && <p className="kanban-assistance">Assistance: {assistance.map((entry) => `${entry.from} → ${entry.to}: ${formatCapacity(entry.capacity)}`).join(" · ")}</p>}
+        </article>
+      </section>
       <div className="kanban-columns">
         {stages.map((stage) => {
           const cards = (cardsByStage.get(stage) ?? []).sort((first, second) => compareCards(stage, rankBacklog && stage === stages[0], first, second));

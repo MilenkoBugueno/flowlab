@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { calculateMetrics, effectiveCapacityFor, runScenario } from "./engine";
 import { runMeanScenario, validateMeanSeedCount } from "./mean";
+import { projectPhasesForPlan } from "./project";
 import { scenarios } from "./scenarios";
 import { validateFeatureBacklog, validateFeatureFocus, validateInitialBacklog, validateInitialInventory, validateOperatingAssumptions, validateWipAssistanceEffectiveness } from "./settings";
 import { withWorkflow } from "./workflow";
@@ -34,6 +35,27 @@ describe("FlowLab simulation engine", () => {
     for (const snapshot of result.snapshots) {
       expect(Object.values(snapshot.states).reduce((total, count) => total + count, 0) + snapshot.externalBacklog).toBe(40);
     }
+  });
+
+  it("drains inherited work when WIP limits and finishing focus begin after a push phase", () => {
+    const header = {
+      ...scenarios.baseline,
+      horizonDays: 100,
+      featureBacklog: { featureCount: 10, minPbisPerFeature: 5, maxPbisPerFeature: 10, baseBugEffort: 1, feedbackDelayEffortFactor: 0.1 },
+    };
+    const config = {
+      ...header,
+      projectPhases: projectPhasesForPlan(header, [
+        { id: "baseline", durationDays: 50, interventions: { wipLimits: false, featureFocus: false, backlogRanking: false } },
+        { id: "mixed", durationDays: 50, interventions: { wipLimits: true, featureFocus: true, backlogRanking: true } },
+      ]),
+    };
+
+    const result = runScenario(config, 42);
+    const secondPhaseEvents = result.events.filter((event) => event.day >= 50);
+
+    expect(secondPhaseEvents.length).toBeGreaterThan(0);
+    expect(result.snapshots[99].states).not.toEqual(result.snapshots[50].states);
   });
 
   it("honours the Integration and Test WIP limits", () => {

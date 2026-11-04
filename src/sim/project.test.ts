@@ -59,6 +59,32 @@ describe("project files", () => {
     expect(phases[0].settings.backlogRanking).toBe(true);
   });
 
+  it("composes independently selected interventions in one phase", () => {
+    const header = {
+      ...scenarios.baseline,
+      horizonDays: 30,
+      wipLimits: { Development: 3, Integration: 2, Test: 1 },
+    };
+    const phases = projectPhasesForPlan(header, [
+      {
+        id: "mixed",
+        durationDays: 30,
+        interventions: { wipLimits: true, featureFocus: true, backlogRanking: true },
+      },
+    ]);
+
+    expect(phases[0]).toMatchObject({
+      label: "WIP Limits + Stop starting, start finishing + Order backlog by ranking",
+      startDay: 0,
+      endDay: 29,
+      settings: {
+        wipLimits: { Development: 3, Integration: 2, Test: 1 },
+        featureFocus: { startDay: 0 },
+        backlogRanking: true,
+      },
+    });
+  });
+
   it("rejects a non-positive duration in an editable intervention plan", () => {
     expect(() => projectPhasesForPlan(scenarios.baseline, [{ id: "invalid", scenarioId: "baseline", durationDays: 0 }]))
       .toThrow("A phase duration must be a positive whole number.");
@@ -85,6 +111,24 @@ describe("project files", () => {
       { scenarioId: "baseline", durationDays: 2 },
       { scenarioId: "wip", durationDays: 2 },
     ]);
+  });
+
+  it("derives all enabled interventions when a mixed phase is reloaded", () => {
+    const source = {
+      ...scenarios.baseline,
+      horizonDays: 20,
+      projectPhases: projectPhasesForPlan(scenarios.baseline, [{
+        id: "mixed",
+        durationDays: 20,
+        interventions: { wipLimits: true, featureFocus: true, backlogRanking: true },
+      }]),
+    };
+    const loaded = parseProjectFile(JSON.stringify(createProjectFile(source, 42)));
+
+    expect(phasePlanFromProject(loaded)[0]).toMatchObject({
+      durationDays: 20,
+      interventions: { wipLimits: true, featureFocus: true, backlogRanking: true },
+    });
   });
 
   it("rejects incomplete and overlapping timelines", () => {

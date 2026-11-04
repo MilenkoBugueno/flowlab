@@ -13,12 +13,26 @@ export interface ProjectFile {
   phases: ProjectPhase[];
 }
 
+/** The independently selectable flow policies for one editable phase. */
+export interface PhaseInterventions {
+  wipLimits: boolean;
+  featureFocus: boolean;
+  backlogRanking: boolean;
+}
+
+export function noPhaseInterventions(): PhaseInterventions {
+  return { wipLimits: false, featureFocus: false, backlogRanking: false };
+}
+
 /** Editable GUI representation of a project phase. */
 export interface PhasePlanEntry {
   id: string;
-  scenarioId: ScenarioId;
+  /** Legacy profile retained so existing saved plans and BDD scenarios still load. */
+  scenarioId?: ScenarioId;
+  /** Explicit policies take precedence over a legacy scenario profile. */
+  interventions?: PhaseInterventions;
   durationDays: number;
-  /** Retains custom imported phase values until the profile is explicitly changed. */
+  /** Retains custom imported phase values while policies are edited. */
   settings?: PhaseSettings;
 }
 
@@ -39,6 +53,27 @@ export function phaseSettingsFor(config: ScenarioConfig): PhaseSettings {
   };
 }
 
+export function phaseInterventionsForScenario(scenarioId: ScenarioId | undefined): PhaseInterventions {
+  return {
+    wipLimits: scenarioId === "wip" || scenarioId === "combined",
+    featureFocus: scenarioId === "swarm" || scenarioId === "combined",
+    backlogRanking: scenarioId === "ranking",
+  };
+}
+
+export function phaseInterventionsForEntry(entry: PhasePlanEntry): PhaseInterventions {
+  return entry.interventions ?? phaseInterventionsForScenario(entry.scenarioId);
+}
+
+export function phaseInterventionLabel(interventions: PhaseInterventions): string {
+  const labels = [
+    interventions.wipLimits && "WIP Limits",
+    interventions.featureFocus && "Stop starting, start finishing",
+    interventions.backlogRanking && "Order backlog by ranking",
+  ].filter((label): label is string => Boolean(label));
+  return labels.length ? labels.join(" + ") : "Baseline";
+}
+
 export function projectPhasesForPlan(header: ScenarioConfig, plan: PhasePlanEntry[]): ProjectPhase[] {
   if (!plan.length) throw new Error("A phase plan needs at least one phase.");
   let startDay = 0;
@@ -46,11 +81,16 @@ export function projectPhasesForPlan(header: ScenarioConfig, plan: PhasePlanEntr
     if (!Number.isInteger(entry.durationDays) || entry.durationDays <= 0) {
       throw new Error("A phase duration must be a positive whole number.");
     }
-    const profile = scenarios[entry.scenarioId];
-    const settings = entry.settings ?? phaseSettingsFor(configForPhaseProfile(header, entry.scenarioId));
+    const interventions = phaseInterventionsForEntry(entry);
+    // Imported phase settings can contain deliberate rate/capacity differences.
+    // Treat them as the base and only replace the three composable policies.
+    const phaseBase = entry.settings ? { ...header, ...clone(entry.settings) } : header;
+    const settings = phaseSettingsFor(configForPhaseInterventions(phaseBase, interventions));
     const phase: ProjectPhase = {
       id: entry.id,
-      label: profile.label,
+      label: entry.interventions === undefined && entry.scenarioId
+        ? scenarios[entry.scenarioId].label
+        : phaseInterventionLabel(interventions),
       startDay,
       endDay: startDay + entry.durationDays - 1,
       settings: clone(settings),
@@ -61,22 +101,19 @@ export function projectPhasesForPlan(header: ScenarioConfig, plan: PhasePlanEntr
 }
 
 /**
- * Phase profiles are interventions, not a replacement for the global model.
- * This retains the workflow, rates, capacities, and initial settings edited in
- * the cockpit while applying the selected WIP/focus behaviour to the phase.
+ * Phase interventions are not a replacement for the global model. This retains
+ * the workflow, rates, capacities, and initial settings edited in the cockpit
+ * while applying every independently enabled flow policy to the phase.
  */
-function configForPhaseProfile(header: ScenarioConfig, scenarioId: ScenarioId): ScenarioConfig {
-  const usesWipLimits = scenarioId === "wip" || scenarioId === "combined";
-  const usesFinishingFocus = scenarioId === "swarm" || scenarioId === "combined";
-  const usesBacklogRanking = scenarioId === "ranking";
+function configForPhaseInterventions(header: ScenarioConfig, interventions: PhaseInterventions): ScenarioConfig {
   const defaultWipLimits = Object.fromEntries(
     header.workflow.stages.slice(1, -1).map((stage) => [stage, 5]),
   );
   return {
     ...header,
-    wipLimits: usesWipLimits ? header.wipLimits ?? defaultWipLimits : undefined,
-    featureFocus: usesFinishingFocus ? { startDay: 0 } : undefined,
-    backlogRanking: usesBacklogRanking,
+    wipLimits: interventions.wipLimits ? header.wipLimits ?? defaultWipLimits : undefined,
+    featureFocus: interventions.featureFocus ? { startDay: 0 } : undefined,
+    backlogRanking: interventions.backlogRanking,
     incident: undefined,
     swarm: undefined,
   };
@@ -88,6 +125,11 @@ export function phasePlanFromProject(project: ProjectFile): PhasePlanEntry[] {
     return {
       id: phase.id,
       scenarioId: profile,
+      interventions: {
+        wipLimits: phase.settings.wipLimits !== undefined,
+        featureFocus: phase.settings.featureFocus !== undefined,
+        backlogRanking: phase.settings.backlogRanking === true,
+      },
       durationDays: phase.endDay - phase.startDay + 1,
       settings: clone(phase.settings),
     };

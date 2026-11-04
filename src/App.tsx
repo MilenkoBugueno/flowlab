@@ -4,11 +4,11 @@ import { DailyLog } from "./DailyLog";
 import { KanbanBoard } from "./KanbanBoard";
 import { runScenario } from "./sim/engine";
 import { runMeanScenario, validateMeanSeedCount } from "./sim/mean";
-import { configFromProjectFile, createProjectFile, parseProjectFile, phasePlanFromProject, projectPhasesForPlan } from "./sim/project";
-import type { PhasePlanEntry } from "./sim/project";
-import { scenarioList, scenarios } from "./sim/scenarios";
+import { configFromProjectFile, createProjectFile, noPhaseInterventions, parseProjectFile, phaseInterventionsForEntry, phasePlanFromProject, projectPhasesForPlan } from "./sim/project";
+import type { PhaseInterventions, PhasePlanEntry } from "./sim/project";
+import { scenarios } from "./sim/scenarios";
 import { withSimulationSettings } from "./sim/settings";
-import type { CapacityIncident, FeatureBacklogConfig, FeatureFocusPolicy, InitialInventory, Metrics, OperatingAssumptions, ScenarioConfig, ScenarioId, SwarmPolicy } from "./sim/types";
+import type { CapacityIncident, FeatureBacklogConfig, FeatureFocusPolicy, InitialInventory, Metrics, OperatingAssumptions, ScenarioConfig, SwarmPolicy } from "./sim/types";
 import { activeStages, withWorkflow } from "./sim/workflow";
 
 const metricLabels: Array<[keyof Metrics, string, string]> = [
@@ -71,7 +71,7 @@ export default function App() {
   const [swarmDraft, setSwarmDraft] = useState<SwarmPolicy>();
   const [interventionError, setInterventionError] = useState<string>();
   const [projectName, setProjectName] = useState("FlowLab project");
-  const [phasePlan, setPhasePlan] = useState<PhasePlanEntry[]>([{ id: "phase-1", scenarioId: "baseline", durationDays: scenarios.baseline.horizonDays }]);
+  const [phasePlan, setPhasePlan] = useState<PhasePlanEntry[]>([{ id: "phase-1", interventions: noPhaseInterventions(), durationDays: scenarios.baseline.horizonDays }]);
   const [phasePlanError, setPhasePlanError] = useState<string>();
   const [projectHeaderOverrides, setProjectHeaderOverrides] = useState<Partial<ScenarioConfig>>({});
   const [projectFileError, setProjectFileError] = useState<string>();
@@ -113,7 +113,10 @@ export default function App() {
   const [showInactiveWork, setShowInactiveWork] = useState(false);
   const [showFeatureCompletions, setShowFeatureCompletions] = useState(false);
   const [showFeatureHandoffs, setShowFeatureHandoffs] = useState(false);
-  const isBaselinePlan = phasePlan.every((phase) => phase.scenarioId === "baseline");
+  const isBaselinePlan = phasePlan.every((phase) => {
+    const interventions = phaseInterventionsForEntry(phase);
+    return !interventions.wipLimits && !interventions.featureFocus && !interventions.backlogRanking;
+  });
   const activeWorkflowStages = activeStages(workflowConfig.workflow);
   const fallbackIncident: CapacityIncident = {
     stage: activeWorkflowStages[0] ?? "",
@@ -201,8 +204,10 @@ export default function App() {
     setPhasePlanError(undefined);
   };
 
-  const updatePhaseProfile = (id: string, scenarioId: ScenarioId) => {
-    setPhasePlan((plan) => plan.map((phase) => phase.id === id ? { ...phase, scenarioId, settings: undefined } : phase));
+  const updatePhaseIntervention = (id: string, intervention: keyof PhaseInterventions, enabled: boolean) => {
+    setPhasePlan((plan) => plan.map((phase) => phase.id === id
+      ? { ...phase, scenarioId: undefined, interventions: { ...phaseInterventionsForEntry(phase), [intervention]: enabled } }
+      : phase));
     setPhasePlanError(undefined);
   };
 
@@ -224,7 +229,7 @@ export default function App() {
   };
 
   const addPhase = () => {
-    setPhasePlan((plan) => [...plan, { id: `phase-${Date.now()}`, scenarioId: "baseline", durationDays: 20 }]);
+    setPhasePlan((plan) => [...plan, { id: `phase-${Date.now()}`, interventions: noPhaseInterventions(), durationDays: 20 }]);
     setPhasePlanError(undefined);
   };
 
@@ -384,13 +389,14 @@ export default function App() {
               {phasePlan.map((phase, index) => {
                 const startDay = phasePlan.slice(0, index).reduce((total, entry) => total + entry.durationDays, 0);
                 const endDay = startDay + phase.durationDays - 1;
+                const interventions = phaseInterventionsForEntry(phase);
                 return <fieldset key={phase.id}>
                   <legend>Days {startDay}–{endDay}</legend>
-                  <label>Intervention
-                    <select value={phase.scenarioId} onChange={(event) => updatePhaseProfile(phase.id, event.target.value as ScenarioId)}>
-                      {scenarioList.map((entry) => <option key={entry.id} value={entry.id}>{entry.label}</option>)}
-                    </select>
-                  </label>
+                  <div className="phase-intervention-list" aria-label="Phase interventions">
+                    <label><input type="checkbox" checked={interventions.wipLimits} onChange={(event) => updatePhaseIntervention(phase.id, "wipLimits", event.target.checked)} />WIP limits</label>
+                    <label><input type="checkbox" checked={interventions.featureFocus} onChange={(event) => updatePhaseIntervention(phase.id, "featureFocus", event.target.checked)} />Stop starting, start finishing</label>
+                    <label><input type="checkbox" checked={interventions.backlogRanking} onChange={(event) => updatePhaseIntervention(phase.id, "backlogRanking", event.target.checked)} />Order backlog by ranking</label>
+                  </div>
                   <label>Days<input type="number" min="1" step="1" value={phase.durationDays} onChange={(event) => updatePhaseDuration(phase.id, event.target.value)} /></label>
                   <div className="phase-plan-actions">
                     <button type="button" disabled={index === 0} onClick={() => movePhase(phase.id, -1)}>↑</button>

@@ -253,26 +253,24 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
     recordMovement(day, "External", entryStage);
   };
 
-  const moveBlocked = (day: number, from: ActiveStage, focus: Feature | undefined, dayConfig: ScenarioConfig) => {
+  const moveBlocked = (day: number, from: ActiveStage, dayConfig: ScenarioConfig) => {
     const target = nextStage(from, stages);
     const candidates = items
       .filter((item) => item.stage === from && item.status === "blocked")
       .sort((a, b) => (a.enteredAt[from] ?? 0) - (b.enteredAt[from] ?? 0) || compareQueuePosition(a, b));
     for (const item of candidates) {
-      if (!isFocused(item, focus)) continue;
       if (target === testStage && item.type === "PBI" && !featureTestGateOpen(item, dayConfig)) continue;
       if (target === exitStage) complete(day, item, from);
       else if (canEnter(target, dayConfig)) enter(day, item, target);
     }
   };
 
-  const pullHandoffWork = (day: number, from: Stage, focus: Feature | undefined, dayConfig: ScenarioConfig) => {
+  const pullHandoffWork = (day: number, from: Stage, dayConfig: ScenarioConfig) => {
     const target = nextStage(from, stages);
     const candidates = items
       .filter((item) => item.stage === from && item.status === "waiting")
       .sort((a, b) => (a.enteredAt[from] ?? 0) - (b.enteredAt[from] ?? 0) || compareQueuePosition(a, b));
     for (const item of candidates) {
-      if (!isFocused(item, focus)) continue;
       if (target === testStage && item.type === "PBI" && !featureTestGateOpen(item, dayConfig)) continue;
       if (target === exitStage) complete(day, item, from);
       else if (canEnter(target, dayConfig)) enter(day, item, target);
@@ -299,11 +297,11 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
     }
   };
 
-  const activateWork = (day: number, stage: ActiveStage, maximumConcurrency: number, focus: Feature | undefined) => {
+  const activateWork = (day: number, stage: ActiveStage, maximumConcurrency: number) => {
     const activeCount = concurrentItemCount(items, stage);
     const openSlots = Math.max(0, maximumConcurrency - activeCount);
     const waiting = items
-      .filter((item) => item.stage === stage && item.status === "waiting" && isFocused(item, focus))
+      .filter((item) => item.stage === stage && item.status === "waiting")
       .sort((a, b) => (a.enteredAt[stage] ?? 0) - (b.enteredAt[stage] ?? 0) || compareQueuePosition(a, b));
     for (const item of waiting.slice(0, openSlots)) {
       item.status = "active";
@@ -406,25 +404,19 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
     feedbackArrivals = 0;
     const pushAllowance = poisson(dayConfig.arrivalRatePerDay, demandRandom) + (config.batchDays.includes(day) ? config.batchSize : 0);
 
-    if (featureFocus) {
-      for (const item of items) {
-        if (item.status === "active" && !isFocused(item, featureFocus)) {
-          item.status = "waiting";
-          item.active = false;
-        }
-      }
-    }
-
     // Stable daily event order: completed work moves, policies are implicit in rates,
-    // admissions/pulls happen, then available stages begin work.
+    // admissions/pulls happen, then available stages begin work. Completion focus
+    // stops *new* Features at Backlog; it never pauses work already in flight.
+    // That lets a WIP-limited phase safely drain work inherited from an earlier
+    // push phase instead of deadlocking above its newly introduced WIP limits.
     [...stages.slice(1, -1)].reverse().forEach((stage) => {
-      if (handoffs.has(stage)) pullHandoffWork(day, stage, featureFocus, dayConfig);
-      else if (active.includes(stage)) moveBlocked(day, stage, featureFocus, dayConfig);
+      if (handoffs.has(stage)) pullHandoffWork(day, stage, dayConfig);
+      else if (active.includes(stage)) moveBlocked(day, stage, dayConfig);
     });
     admitBacklogWork(day, pushAllowance, featureFocus, dayConfig);
     active.forEach((stage) => {
       const maximumConcurrency = dayConfig.operatingAssumptions?.[stage]?.maximumConcurrency ?? 16;
-      activateWork(day, stage, maximumConcurrency, featureFocus);
+      activateWork(day, stage, maximumConcurrency);
     });
     const operatingCapacity = active.map((stage) => {
       const baseCapacity = processingRateFor(stage, day, dayConfig);
