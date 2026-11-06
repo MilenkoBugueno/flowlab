@@ -8,6 +8,21 @@ function stateAtDay(item: WorkItem, day: number): ItemTimelineState | undefined 
   return undefined;
 }
 
+/** A card is active when it received processing capacity on the selected day. */
+function wasProcessedOnDay(item: WorkItem, day: number): boolean {
+  let latestIndex = -1;
+  for (let index = item.history.length - 1; index >= 0; index -= 1) {
+    if (item.history[index].day <= day) {
+      latestIndex = index;
+      break;
+    }
+  }
+  if (latestIndex < 0 || item.history[latestIndex].day !== day) return false;
+  const current = item.history[latestIndex];
+  const previous = item.history[latestIndex - 1];
+  return previous !== undefined && current.progressPercent !== previous.progressPercent;
+}
+
 function formatDay(day: number | undefined): string {
   return day === undefined ? "—" : `Day ${day}`;
 }
@@ -83,26 +98,11 @@ export function KanbanBoard({ result, selectedDay, onSelectDay }: Props) {
         <p>Items created after this day are not shown.</p>
       </header>
       <section className="kanban-day-summary" aria-labelledby="kanban-day-summary-title">
-        <div className="kanban-summary-heading">
-          <p className="eyebrow">Daily summary</p>
-          <h3 id="kanban-day-summary-title">What happened on Day {selectedDay}</h3>
-        </div>
-        <article className="kanban-summary-card interventions-summary">
-          <h4>Active interventions</h4>
-          {activeInterventions.length ? <ul>{activeInterventions.map((intervention) => <li key={intervention}>{intervention}</li>)}</ul> : <p>Baseline flow</p>}
-          {phase && <small>Phase: {phase.label}</small>}
-        </article>
-        <article className="kanban-summary-card flow-summary">
-          <h4>Today’s flow</h4>
-          <dl>
-            <div><dt>Stage changes</dt><dd>{stageChanges}</dd></div>
-            <div><dt>New arrivals</dt><dd>{externalArrivals}</dd></div>
-            <div><dt>Completed</dt><dd>{snapshot?.completions ?? 0}</dd></div>
-            <div><dt>Task-switch loss</dt><dd>{formatCapacity(totalTaskSwitchingLoss)}</dd></div>
-          </dl>
-          {movements.some((movement) => movement.count > 0) && <p className="kanban-movements">{movements.filter((movement) => movement.count > 0).map((movement) => `${movement.from} → ${movement.to}: ${movement.count}`).join(" · ")}</p>}
-        </article>
         <article className="kanban-summary-card capacity-summary">
+          <div className="kanban-summary-heading">
+            <p className="eyebrow">Daily summary</p>
+            <h3 id="kanban-day-summary-title">What happened on Day {selectedDay}</h3>
+          </div>
           <h4>Stage capacity</h4>
           <div className="kanban-capacity-table-wrap">
             <table>
@@ -123,8 +123,23 @@ export function KanbanBoard({ result, selectedDay, onSelectDay }: Props) {
               </tbody>
             </table>
           </div>
-          <p>— marks an entry, handoff, or completed stage without processing capacity.</p>
+          <p>— = non-processing stage</p>
           {assistance.length > 0 && <p className="kanban-assistance">Assistance: {assistance.map((entry) => `${entry.from} → ${entry.to}: ${formatCapacity(entry.capacity)}`).join(" · ")}</p>}
+        </article>
+        <article className="kanban-summary-card interventions-summary">
+          <h4>Active interventions</h4>
+          {activeInterventions.length ? <ul>{activeInterventions.map((intervention) => <li key={intervention}>{intervention}</li>)}</ul> : <p>Baseline flow</p>}
+          {phase && <small>Phase: {phase.label}</small>}
+        </article>
+        <article className="kanban-summary-card flow-summary">
+          <h4>Today’s flow</h4>
+          <dl>
+            <div><dt>Stage changes</dt><dd>{stageChanges}</dd></div>
+            <div><dt>New arrivals</dt><dd>{externalArrivals}</dd></div>
+            <div><dt>Completed</dt><dd>{snapshot?.completions ?? 0}</dd></div>
+            <div><dt>Task-switch loss</dt><dd>{formatCapacity(totalTaskSwitchingLoss)}</dd></div>
+          </dl>
+          {movements.some((movement) => movement.count > 0) && <p className="kanban-movements">{movements.filter((movement) => movement.count > 0).map((movement) => `${movement.from} → ${movement.to}: ${movement.count}`).join(" · ")}</p>}
         </article>
       </section>
       <div className="kanban-columns">
@@ -134,13 +149,14 @@ export function KanbanBoard({ result, selectedDay, onSelectDay }: Props) {
             <section className="kanban-column" key={stage} aria-label={`${stage}: ${cards.length} items`}>
               <h3>{stage}<small>{cards.length}</small></h3>
               <div className="kanban-cards">
-                {cards.map(({ item, state }) => (
-                  <article className={`kanban-card ${state.active ? "active" : "inactive"}`} key={item.id}>
-                    <div className="kanban-card-heading"><span className={`item-type ${item.type.toLowerCase()}`}>{item.type}</span><strong>{item.id}</strong>{!state.active && <span className="inactive-marker">Inactive</span>}</div>
+                {cards.map(({ item, state }) => {
+                  const activeToday = wasProcessedOnDay(item, selectedDay);
+                  return <article className={`kanban-card ${activeToday ? "active" : "inactive"}`} key={item.id}>
+                    <div className="kanban-card-heading"><span className={`item-type ${item.type.toLowerCase()}`}>{item.type}</span><strong>{item.id}</strong>{!activeToday && <span className="inactive-marker">Inactive</span>}</div>
                     <p>{item.title}</p>
                     <dl>
                       <div><dt>Stage</dt><dd>{state.stage}</dd></div>
-                      <div><dt>Active</dt><dd>{state.active ? "Yes" : "No"}</dd></div>
+                      <div><dt>Active today</dt><dd>{activeToday ? "Yes" : "No"}</dd></div>
                       <div><dt>Progress</dt><dd>{state.progressPercent.toFixed(0)}%</dd></div>
                       {item.featureId && <div><dt>Feature</dt><dd>{item.featureTitle ?? item.featureId}</dd></div>}
                       {item.ranking !== undefined && <div><dt>Ranking</dt><dd>{item.ranking}</dd></div>}
@@ -150,7 +166,7 @@ export function KanbanBoard({ result, selectedDay, onSelectDay }: Props) {
                       <div><dt>Complete</dt><dd>{formatDay(state.completionDate)}</dd></div>
                     </dl>
                   </article>
-                ))}
+                })}
               </div>
             </section>
           );

@@ -4,7 +4,7 @@ import { DailyLog } from "./DailyLog";
 import { KanbanBoard } from "./KanbanBoard";
 import { runScenario } from "./sim/engine";
 import { runMeanScenario, validateMeanSeedCount } from "./sim/mean";
-import { configFromProjectFile, createProjectFile, noPhaseInterventions, parseProjectFile, phaseInterventionsForEntry, phasePlanFromProject, projectPhasesForPlan } from "./sim/project";
+import { baselineConfigForComparison, configFromProjectFile, createProjectFile, noPhaseInterventions, parseProjectFile, phaseInterventionsForEntry, phasePlanFromProject, projectPhasesForPlan } from "./sim/project";
 import type { PhaseInterventions, PhasePlanEntry } from "./sim/project";
 import { scenarios } from "./sim/scenarios";
 import { withSimulationSettings } from "./sim/settings";
@@ -96,8 +96,8 @@ export default function App() {
     [customizedConfig, phasePlanHorizon, projectPhases],
   );
   const baselineConfig = useMemo(
-    () => withSimulationSettings({ ...scenarios.baseline, horizonDays: phasePlanHorizon }, { arrivalRatePerDay: savedArrivalRate, initialInventory: inventoryForStages(savedInitialInventory, scenarios.baseline.workflow.stages), featureBacklog: savedFeatureBacklog, wipAssistanceEffectiveness: savedWipAssistanceEffectiveness, operatingAssumptions: savedOperatingAssumptions }),
-    [savedArrivalRate, savedInitialInventory, savedFeatureBacklog, savedWipAssistanceEffectiveness, savedOperatingAssumptions, phasePlanHorizon],
+    () => baselineConfigForComparison(selectedConfig),
+    [selectedConfig],
   );
   const baseline = useMemo(
     () => meanSeedCount === 1 ? runScenario(baselineConfig, seed) : runMeanScenario(baselineConfig, meanSeedCount, seed),

@@ -149,6 +149,31 @@ export function configForProjectDay(config: ScenarioConfig, day: number): { conf
   };
 }
 
+/**
+ * Build an apples-to-apples comparison run. Operational inputs—including
+ * per-phase rates and concurrency—stay intact; only the three flow policies
+ * controlled by the phase plan are removed.
+ */
+export function baselineConfigForComparison(config: ScenarioConfig): ScenarioConfig {
+  const withoutFlowPolicies = (settings: PhaseSettings): PhaseSettings => ({
+    ...clone(settings),
+    wipLimits: undefined,
+    featureFocus: undefined,
+    backlogRanking: false,
+  });
+  return {
+    ...clone(config),
+    wipLimits: undefined,
+    featureFocus: undefined,
+    backlogRanking: false,
+    projectPhases: config.projectPhases?.map((phase) => ({
+      ...clone(phase),
+      label: "Baseline",
+      settings: withoutFlowPolicies(phase.settings),
+    })),
+  };
+}
+
 export function createProjectFile(config: ScenarioConfig, seed: number, name = "FlowLab project"): ProjectFile {
   const { projectPhases: existingPhases, ...header } = clone(config);
   const phases = existingPhases?.length

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { runScenario } from "./engine";
-import { configFromProjectFile, createProjectFile, parseProjectFile, phasePlanFromProject, phaseSettingsFor, projectPhasesForPlan } from "./project";
+import { baselineConfigForComparison, configForProjectDay, configFromProjectFile, createProjectFile, parseProjectFile, phasePlanFromProject, phaseSettingsFor, projectPhasesForPlan } from "./project";
 import { scenarios } from "./scenarios";
 
 function projectConfig() {
@@ -129,6 +129,55 @@ describe("project files", () => {
       durationDays: 20,
       interventions: { wipLimits: true, featureFocus: true, backlogRanking: true },
     });
+  });
+
+  it("keeps operational settings while removing flow policies from a comparison baseline", () => {
+    const selected = {
+      ...scenarios.baseline,
+      horizonDays: 20,
+      arrivalRatePerDay: 2.4,
+      baseRates: { Development: 5, Test: 2 },
+      operatingAssumptions: {
+        Development: { focusWip: 4, maximumConcurrency: 7, taskSwitchingLossRatio: 0.15 },
+        Test: { focusWip: 5, maximumConcurrency: 5, taskSwitchingLossRatio: 0.2 },
+      },
+      featureBacklog: { featureCount: 10, minPbisPerFeature: 2, maxPbisPerFeature: 3, baseBugEffort: 1, feedbackDelayEffortFactor: 0.1 },
+      wipLimits: { Development: 5, Integration: 5, Test: 5 },
+      featureFocus: { startDay: 0 },
+      backlogRanking: true,
+      projectPhases: [{
+        id: "mixed",
+        label: "WIP Limits + Stop starting, start finishing + Order backlog by ranking",
+        startDay: 0,
+        endDay: 19,
+        settings: {
+          ...phaseSettingsFor({
+            ...scenarios.baseline,
+            arrivalRatePerDay: 2.4,
+            baseRates: { Development: 5, Test: 2 },
+            operatingAssumptions: {
+              Development: { focusWip: 4, maximumConcurrency: 7, taskSwitchingLossRatio: 0.15 },
+              Test: { focusWip: 5, maximumConcurrency: 5, taskSwitchingLossRatio: 0.2 },
+            },
+            wipLimits: { Development: 5, Integration: 5, Test: 5 },
+            featureFocus: { startDay: 0 },
+            backlogRanking: true,
+          }),
+        },
+      }],
+    };
+
+    const baseline = baselineConfigForComparison(selected);
+    const day = configForProjectDay(baseline, 10).config;
+
+    expect(baseline.workflow).toEqual(selected.workflow);
+    expect(baseline.featureBacklog).toEqual(selected.featureBacklog);
+    expect(day.arrivalRatePerDay).toBe(2.4);
+    expect(day.baseRates).toEqual({ Development: 5, Test: 2 });
+    expect(day.operatingAssumptions).toEqual(selected.operatingAssumptions);
+    expect(day.wipLimits).toBeUndefined();
+    expect(day.featureFocus).toBeUndefined();
+    expect(day.backlogRanking).toBe(false);
   });
 
   it("rejects incomplete and overlapping timelines", () => {
