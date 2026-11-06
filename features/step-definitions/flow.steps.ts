@@ -1834,7 +1834,7 @@ Given("a feature-backed backlog with three Features in creation order", function
   this.config = finishingFocusConfig();
 });
 
-Given("Stop starting, start finishing begins on day {int}", function (this: FlowLabWorld, startDay: number) {
+Given("Swarming begins on day {int}", function (this: FlowLabWorld, startDay: number) {
   assert.ok(this.config, "Expected a feature-backed configuration");
   this.config = { ...this.config, featureFocus: { startDay } };
 });
@@ -1873,7 +1873,7 @@ Given("Development has free capacity", function (this: FlowLabWorld) {
   assert.ok(this.config, "Expected a configured simulation");
 });
 
-When("I simulate another working day with Stop starting, start finishing active", function (this: FlowLabWorld) {
+When("I simulate another working day with Swarming active", function (this: FlowLabWorld) {
   assert.ok(this.config, "Expected a configured simulation");
   this.result = runScenario(this.config, 42);
 });
@@ -1978,7 +1978,7 @@ Given("no focused Feature work can use Development capacity today", function (th
   assert.ok(this.config, "Expected a configured simulation");
 });
 
-When("I simulate a working day with Stop starting, start finishing active", function (this: FlowLabWorld) {
+When("I simulate a working day with Swarming active", function (this: FlowLabWorld) {
   assert.ok(this.config, "Expected a configured simulation");
   this.result = runScenario(this.config, 42);
 });
@@ -2035,7 +2035,7 @@ Then("Feature 002 work may be admitted from Backlog into Development", function 
   assert.ok(result.events.some((event) => event.type === "entered-stage" && event.stage === "Development" && event.day === 7 && result.items.find((item) => item.id === event.itemId)?.featureId === "FEATURE-002"));
 });
 
-Given("Stop starting, start finishing is active", function (this: FlowLabWorld) {
+Given("Swarming is active", function (this: FlowLabWorld) {
   this.config = finishingFocusConfig();
 });
 
@@ -2067,7 +2067,7 @@ Given("a backlog containing no Features", function (this: FlowLabWorld) {
   });
 });
 
-When("I activate Stop starting, start finishing", function (this: FlowLabWorld) {
+When("I activate Swarming", function (this: FlowLabWorld) {
   assert.ok(this.config, "Expected a configured simulation");
   this.result = runScenario(this.config, 42);
 });
@@ -2082,7 +2082,7 @@ Then("no finishing focus is shown", function (this: FlowLabWorld) {
   assert.ok(resultFor(this).snapshots.every((snapshot) => snapshot.featureFocus === undefined));
 });
 
-Given("Stop starting, start finishing is active for a feature-backed backlog", function (this: FlowLabWorld) {
+Given("Swarming is active for a feature-backed backlog", function (this: FlowLabWorld) {
   this.config = finishingFocusConfig({
     horizonDays: 3,
     featureBacklog: { featureCount: 2, minPbisPerFeature: 1, maxPbisPerFeature: 1, baseBugEffort: 1, feedbackDelayEffortFactor: 0 },
@@ -2202,8 +2202,8 @@ Given("a project file with feature-backed initial work", function (this: FlowLab
   this.projectFile = { formatVersion: 1, name: "Focus", seed: 42, config: this.config, phases: [] };
 });
 
-Given("a WIP Limits plus Start Finishing phase from day {int} through day {int}", function (this: FlowLabWorld, startDay: number, endDay: number) {
-  addProjectPhase(this, "combined", "WIP Limits + Start Finishing", startDay, endDay, { wipLimits: { Development: 5, Integration: 5, Test: 5 }, featureFocus: { startDay } });
+Given("a WIP Limits plus Swarming phase from day {int} through day {int}", function (this: FlowLabWorld, startDay: number, endDay: number) {
+  addProjectPhase(this, "combined", "WIP Limits + Swarming", startDay, endDay, { wipLimits: { Development: 5, Integration: 5, Test: 5 }, featureFocus: { startDay } });
 });
 
 When("I load and simulate the project with seed {int}", function (this: FlowLabWorld, seed: number) {
@@ -2484,7 +2484,7 @@ Then(/^Baseline covers days (\d+) through (\d+)$/, function (this: FlowLabWorld,
   assert.equal(phase.endDay, Number(endDay));
 });
 
-Given("a phase plan with Baseline for {int} working days, WIP Limits for {int} working days, and Start Finishing - Stop Starting for {int} working days", function (this: FlowLabWorld, baselineDays: number, wipDays: number, finishingDays: number) {
+Given("a phase plan with Baseline for {int} working days, WIP Limits for {int} working days, and Swarming for {int} working days", function (this: FlowLabWorld, baselineDays: number, wipDays: number, finishingDays: number) {
   this.phasePlan = [
     { id: "phase-1", scenarioId: "baseline", durationDays: baselineDays },
     { id: "phase-2", scenarioId: "wip", durationDays: wipDays },
@@ -2498,8 +2498,8 @@ When("I remove the WIP Limits phase", function (this: FlowLabWorld) {
   configurePhasePlan(this);
 });
 
-Then(/^Start Finishing - Stop Starting covers days (\d+) through (\d+)$/, function (this: FlowLabWorld, startDay: string, endDay: string) {
-  const phase = phaseAt(this, "Start Finishing - Stop Starting");
+Then(/^Swarming covers days (\d+) through (\d+)$/, function (this: FlowLabWorld, startDay: string, endDay: string) {
+  const phase = phaseAt(this, "Swarming");
   assert.equal(phase.startDay, Number(startDay));
   assert.equal(phase.endDay, Number(endDay));
 });
@@ -2592,7 +2592,7 @@ When("I enable WIP limits for that phase", function (this: FlowLabWorld) {
   setCurrentPlanIntervention(this, "wipLimits", true);
 });
 
-When("I enable Stop starting, start finishing for that phase", function (this: FlowLabWorld) {
+When("I enable Swarming for that phase", function (this: FlowLabWorld) {
   setCurrentPlanIntervention(this, "featureFocus", true);
 });
 
@@ -2600,7 +2600,7 @@ When("I enable Order backlog by ranking for that phase", function (this: FlowLab
   setCurrentPlanIntervention(this, "backlogRanking", true);
 });
 
-Then("the phase lists WIP limits, Stop starting, start finishing, and Order backlog by ranking", function (this: FlowLabWorld) {
+Then("the phase lists WIP limits, Swarming, and Order backlog by ranking", function (this: FlowLabWorld) {
   assert.deepEqual(phaseInterventionsForEntry(currentPlanEntry(this)), composedInterventions({ wipLimits: true, featureFocus: true, backlogRanking: true }));
 });
 
@@ -2608,7 +2608,7 @@ Then("its settings retain the configured WIP limits", function (this: FlowLabWor
   assert.deepEqual(configurePhasePlan(this).projectPhases?.[0].settings.wipLimits, { Development: 5, Integration: 5, Test: 5 });
 });
 
-Then("its settings enable Feature finishing focus from the phase's first day", function (this: FlowLabWorld) {
+Then("its settings enable Swarming from the phase's first day", function (this: FlowLabWorld) {
   assert.deepEqual(configurePhasePlan(this).projectPhases?.[0].settings.featureFocus, { startDay: 0 });
 });
 
@@ -2616,7 +2616,7 @@ Then("its settings enable backlog ranking", function (this: FlowLabWorld) {
   assert.equal(configurePhasePlan(this).projectPhases?.[0].settings.backlogRanking, true);
 });
 
-Given("a phase with WIP limits, Stop starting, start finishing, and Order backlog by ranking", function (this: FlowLabWorld) {
+Given("a phase with WIP limits, Swarming, and Order backlog by ranking", function (this: FlowLabWorld) {
   configureComposedPhase(this, composedInterventions({ wipLimits: true, featureFocus: true, backlogRanking: true }));
 });
 
@@ -2661,7 +2661,7 @@ Given("a phase with WIP limits and Order backlog by ranking", function (this: Fl
   configureComposedPhase(this, composedInterventions({ wipLimits: true, backlogRanking: true }), 6);
 });
 
-Given("Stop starting, start finishing is disabled for that phase", function (this: FlowLabWorld) {
+Given("Swarming is disabled for that phase", function (this: FlowLabWorld) {
   assert.equal(phaseInterventionsForEntry(currentPlanEntry(this)).featureFocus, false);
 });
 
@@ -2683,7 +2683,7 @@ Then("more than one Feature may have active work", function (this: FlowLabWorld)
   assert.ok(admittedFeatures.size > 1);
 });
 
-Given("a 20-day phase with WIP limits, Stop starting, start finishing, and Order backlog by ranking", function (this: FlowLabWorld) {
+Given("a 20-day phase with WIP limits, Swarming, and Order backlog by ranking", function (this: FlowLabWorld) {
   this.phasePlan = [{ id: "mixed-one", durationDays: 20, interventions: composedInterventions({ wipLimits: true, featureFocus: true, backlogRanking: true }) }];
 });
 
@@ -2710,7 +2710,7 @@ Then("Backlog remains ordered by ranking", function (this: FlowLabWorld) {
   assert.equal(configForProjectDay(resultFor(this).config, 20).config.backlogRanking, true);
 });
 
-Then("Stop starting, start finishing no longer restricts admission", function (this: FlowLabWorld) {
+Then("Swarming no longer restricts admission", function (this: FlowLabWorld) {
   assert.equal(configForProjectDay(resultFor(this).config, 20).config.featureFocus, undefined);
 });
 

@@ -65,7 +65,7 @@ export function KanbanBoard({ result, selectedDay, onSelectDay }: Props) {
   const externalArrivals = movementCount(movements, "External", stages[0]);
   const activeInterventions = [
     dayConfig.wipLimits && `WIP limits (${Object.entries(dayConfig.wipLimits).map(([stage, limit]) => `${stage}: ${limit}`).join(" · ")})`,
-    dayConfig.featureFocus && `Stop starting, start finishing${dailyLog?.featureFocus ? ` · ${dailyLog.featureFocus.title}` : ""}`,
+    dayConfig.featureFocus && `Swarming${dailyLog?.featureFocus ? ` · ${dailyLog.featureFocus.title}` : ""}`,
     dayConfig.backlogRanking && "Order backlog by ranking",
     dayConfig.incident && selectedDay >= dayConfig.incident.startDay && selectedDay <= dayConfig.incident.endDay
       && `Capacity incident · ${dayConfig.incident.stage}: ${formatCapacity(dayConfig.incident.ratePerDay)}/day`,

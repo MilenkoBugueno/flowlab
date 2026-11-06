@@ -68,7 +68,7 @@ export function phaseInterventionsForEntry(entry: PhasePlanEntry): PhaseInterven
 export function phaseInterventionLabel(interventions: PhaseInterventions): string {
   const labels = [
     interventions.wipLimits && "WIP Limits",
-    interventions.featureFocus && "Stop starting, start finishing",
+    interventions.featureFocus && "Swarming",
     interventions.backlogRanking && "Order backlog by ranking",
   ].filter((label): label is string => Boolean(label));
   return labels.length ? labels.join(" + ") : "Baseline";

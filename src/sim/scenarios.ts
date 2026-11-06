@@ -34,7 +34,7 @@ export const scenarios: Record<ScenarioId, ScenarioConfig> = {
   },
   swarm: {
     id: "swarm",
-    label: "Start Finishing - Stop Starting",
+    label: "Swarming",
     summary: "Finish the oldest incomplete Feature before admitting another, using unused Development capacity to help Test.",
     ...common,
     featureFocus: { startDay: 0 },
@@ -48,8 +48,8 @@ export const scenarios: Record<ScenarioId, ScenarioConfig> = {
   },
   combined: {
     id: "combined",
-    label: "WIP Limits + Start Finishing",
-    summary: "Stage WIP limits stabilize pull flow while finishing focus completes one Feature before starting the next.",
+    label: "WIP Limits + Swarming",
+    summary: "Stage WIP limits stabilize pull flow while Swarming completes one Feature before starting the next.",
     ...common,
     wipLimits: { Development: 5, Integration: 5, Test: 5 },
     featureFocus: { startDay: 0 },

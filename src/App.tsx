@@ -394,7 +394,7 @@ export default function App() {
                   <legend>Days {startDay}–{endDay}</legend>
                   <div className="phase-intervention-list" aria-label="Phase interventions">
                     <label><input type="checkbox" checked={interventions.wipLimits} onChange={(event) => updatePhaseIntervention(phase.id, "wipLimits", event.target.checked)} />WIP limits</label>
-                    <label><input type="checkbox" checked={interventions.featureFocus} onChange={(event) => updatePhaseIntervention(phase.id, "featureFocus", event.target.checked)} />Stop starting, start finishing</label>
+                    <label><input type="checkbox" checked={interventions.featureFocus} onChange={(event) => updatePhaseIntervention(phase.id, "featureFocus", event.target.checked)} />Swarming</label>
                     <label><input type="checkbox" checked={interventions.backlogRanking} onChange={(event) => updatePhaseIntervention(phase.id, "backlogRanking", event.target.checked)} />Order backlog by ranking</label>
                   </div>
                   <label>Days<input type="number" min="1" step="1" value={phase.durationDays} onChange={(event) => updatePhaseDuration(phase.id, event.target.value)} /></label>
@@ -475,11 +475,11 @@ export default function App() {
           <details className="settings-panel">
             <summary>Interventions</summary>
             <section className="intervention-editor" aria-labelledby="completion-focus-heading">
-              <h2 id="completion-focus-heading">Stop starting, start finishing</h2>
+              <h2 id="completion-focus-heading">Swarming</h2>
               <p>Finish the oldest incomplete Feature before admitting another one. Unused Development capacity helps Test for that Feature.</p>
-              <label className="completion-focus-toggle"><span>Enable finishing focus</span><input type="checkbox" checked={featureFocusEnabled} onChange={(event) => setFeatureFocusEnabled(event.target.checked)} /></label>
+              <label className="completion-focus-toggle"><span>Enable swarming</span><input type="checkbox" checked={featureFocusEnabled} onChange={(event) => setFeatureFocusEnabled(event.target.checked)} /></label>
               <label>Start day<input type="number" min="0" step="1" disabled={!featureFocusEnabled} value={featureFocusStartDay} onChange={(event) => setFeatureFocusStartDay(event.target.value)} /></label>
-              <button type="button" onClick={saveFeatureFocus}>Save finishing focus</button>
+              <button type="button" onClick={saveFeatureFocus}>Save swarming</button>
               {featureFocusError && <p className="settings-error" role="alert">{featureFocusError}</p>}
             </section>
             <section className="intervention-editor" aria-labelledby="incident-heading">

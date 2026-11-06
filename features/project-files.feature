@@ -37,7 +37,7 @@ Feature: Project files with time-phased simulation settings
   Scenario: Combine a time-phased WIP policy with finishing focus
     Given a project file with feature-backed initial work
     And a WIP Limits phase from day 0 through day 50
-    And a WIP Limits plus Start Finishing phase from day 51 through day 120
+    And a WIP Limits plus Swarming phase from day 51 through day 120
     When I load and simulate the project with seed 42
     Then WIP limits remain active in the second phase
     And the oldest unfinished Feature becomes the finishing focus on day 51

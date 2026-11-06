@@ -43,8 +43,8 @@ deterministic rules. Therefore, the same project file and seed always produce
 the same item histories and CFD. A mean CFD runs several consecutive seeds and
 averages their daily states and metrics.
 
-The simulator includes Baseline, Start Finishing - Stop Starting, WIP Limits,
-and WIP Limits + Start Finishing presets. It is a learning model, not a
+The simulator includes Baseline, Swarming, WIP Limits,
+and WIP Limits + Swarming presets. It is a learning model, not a
 calibrated prediction of a specific organization.
 
 Load [`samples/baseline-to-wip.flowlab.json`](samples/baseline-to-wip.flowlab.json)

@@ -36,7 +36,7 @@ export function DailyLog({ entries, snapshots, stages, seed }: Props) {
               <th scope="col">Day</th>
               {routes.map((route) => <th key={`${route.from}-${route.to}`} scope="col">{route.from} → {route.to}</th>)}
               <th scope="col">Project phase</th>
-              <th scope="col">Finishing focus</th>
+              <th scope="col">Swarming focus</th>
               <th scope="col">Focus swarm</th>
               <th scope="col">Task-switch loss</th>
             </tr>

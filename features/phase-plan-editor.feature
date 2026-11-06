@@ -19,7 +19,7 @@ Feature: Configure a multi-phase intervention plan in the GUI
 
   Scenario: Extend an existing plan with finishing focus
     Given a phase plan with Baseline for 20 working days and WIP Limits for 30 working days
-    When I add a Start Finishing - Stop Starting phase lasting 20 working days
+    When I add a Swarming phase lasting 20 working days
     Then the new phase starts on day 50 and ends on day 69
     And the simulation horizon becomes 70 working days
     And the CFD shows phase boundaries on days 20 and 50
@@ -46,10 +46,10 @@ Feature: Configure a multi-phase intervention plan in the GUI
     And the simulation horizon remains 50 working days
 
   Scenario: Remove a phase from the plan
-    Given a phase plan with Baseline for 20 working days, WIP Limits for 30 working days, and Start Finishing - Stop Starting for 20 working days
+    Given a phase plan with Baseline for 20 working days, WIP Limits for 30 working days, and Swarming for 20 working days
     When I remove the WIP Limits phase
     Then Baseline covers days 0 through 19
-    And Start Finishing - Stop Starting covers days 20 through 39
+    And Swarming covers days 20 through 39
     And the simulation horizon becomes 40 working days
 
   Scenario: Reject an invalid phase duration

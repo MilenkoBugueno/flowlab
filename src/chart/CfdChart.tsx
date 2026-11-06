@@ -219,7 +219,7 @@ function DayInspector({ snapshot, workflow }: { snapshot: DailySnapshot; workflo
       </div>
       <div><span>Arrived</span><strong>{formatCount(snapshot.arrivals)}</strong></div>
       <div><span>Completed</span><strong>{formatCount(snapshot.completions)}</strong></div>
-      {snapshot.featureFocus && <div><span>Finishing focus</span><strong>{snapshot.featureFocus.title}</strong></div>}
+      {snapshot.featureFocus && <div><span>Swarming focus</span><strong>{snapshot.featureFocus.title}</strong></div>}
       {snapshot.projectPhase && <div><span>Project phase</span><strong>{snapshot.projectPhase.label}</strong></div>}
       {statesToInspect.map((stage) => (
         <div key={stage}><span>{stage}</span><strong>{formatCount(snapshot.states[stage])} {active.has(stage) && <small>({formatCount(snapshot.active[stage] ?? 0)} active)</small>}</strong></div>

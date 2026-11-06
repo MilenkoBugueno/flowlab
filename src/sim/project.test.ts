@@ -74,7 +74,7 @@ describe("project files", () => {
     ]);
 
     expect(phases[0]).toMatchObject({
-      label: "WIP Limits + Stop starting, start finishing + Order backlog by ranking",
+      label: "WIP Limits + Swarming + Order backlog by ranking",
       startDay: 0,
       endDay: 29,
       settings: {
@@ -147,7 +147,7 @@ describe("project files", () => {
       backlogRanking: true,
       projectPhases: [{
         id: "mixed",
-        label: "WIP Limits + Stop starting, start finishing + Order backlog by ranking",
+        label: "WIP Limits + Swarming + Order backlog by ranking",
         startDay: 0,
         endDay: 19,
         settings: {

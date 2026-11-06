@@ -1,4 +1,4 @@
-Feature: Stop starting, start finishing
+Feature: Swarming
 
   A completion-focused intervention keeps the system focused on one Feature at
   a time. It stops additional Features from being started, gives the selected
@@ -10,7 +10,7 @@ Feature: Stop starting, start finishing
 
   Scenario: Select the oldest unfinished Feature when the intervention begins
     Given a feature-backed backlog with three Features in creation order
-    And Stop starting, start finishing begins on day 0
+    And Swarming begins on day 0
     When I simulate the first working day
     Then Feature 001 is the current finishing focus
     And only Feature 001 work is admitted from Backlog into Development
@@ -19,7 +19,7 @@ Feature: Stop starting, start finishing
   Scenario: Do not start a later Feature while the focused Feature is unfinished
     Given Feature 001 has unfinished PBIs or feedback Bugs
     And Development has free capacity
-    When I simulate another working day with Stop starting, start finishing active
+    When I simulate another working day with Swarming active
     Then no PBI or Bug belonging to a later Feature enters Development
     And available capacity is used only for Feature 001 work when such work is ready
 
@@ -39,13 +39,13 @@ Feature: Stop starting, start finishing
   Scenario: Swarm available Development capacity to a focused Test constraint
     Given the focused Feature has ready work in Test
     And no focused Feature work can use Development capacity today
-    When I simulate a working day with Stop starting, start finishing active
+    When I simulate a working day with Swarming active
     Then available Development capacity is reassigned to Test for the focused Feature
     And the capacity transfer is recorded as a completion-focus swarm
 
   Scenario: Return Development capacity when the focused Feature needs it
     Given the focused Feature has work ready in Development
-    When I simulate a working day with Stop starting, start finishing active
+    When I simulate a working day with Swarming active
     Then Development uses its capacity for focused Feature work before swarming Test
 
   Scenario: Release the next Feature only after the current one is complete
@@ -57,7 +57,7 @@ Feature: Stop starting, start finishing
     And Feature 002 work may be admitted from Backlog into Development
 
   Scenario: Respect explicit WIP limits while focusing on completion
-    Given Stop starting, start finishing is active
+    Given Swarming is active
     And Development, Integration, and Test each have an explicit WIP limit
     When I simulate the workflow
     Then no focused Feature item enters a stage above that stage's WIP limit
@@ -65,12 +65,12 @@ Feature: Stop starting, start finishing
 
   Scenario: Leave a workflow without Features unchanged
     Given a backlog containing no Features
-    When I activate Stop starting, start finishing
+    When I activate Swarming
     Then regular backlog admission and capacity behavior continue unchanged
     And no finishing focus is shown
 
   Scenario: Expose the current finishing focus in the simulation readouts
-    Given Stop starting, start finishing is active for a feature-backed backlog
+    Given Swarming is active for a feature-backed backlog
     When I inspect a simulated day
     Then the CFD day inspector identifies the current finishing focus
     And the daily log identifies the focused Feature and any completion-focus swarm
