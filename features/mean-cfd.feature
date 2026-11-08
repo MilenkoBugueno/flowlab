@@ -35,7 +35,7 @@ Feature: Mean CFD across multiple seeds
     And the mean CFD includes a Discovery band
 
   Scenario: Compare an intervention mean against a fair baseline mean
-    Given the baseline scenario with a scheduled Test swarm
+    Given the baseline scenario with a scheduled Test capacity transfer
     When I choose 100 seeds for the mean CFD
     And I run the mean simulation
     Then the baseline comparison uses the same 100 seeds

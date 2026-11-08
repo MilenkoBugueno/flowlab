@@ -17,7 +17,7 @@ import type {
   WorkItem,
   WorkItemType,
 } from "./types";
-import { activeStages, handoffStages, nextActiveStage } from "./workflow";
+import { activeStages, handoffStages } from "./workflow";
 
 const emptyStages = (stages: Stage[]): Record<Stage, number> => Object.fromEntries(stages.map((stage) => [stage, 0]));
 const emptyActive = (stages: ActiveStage[]): Record<ActiveStage, number> => Object.fromEntries(stages.map((stage) => [stage, 0]));
@@ -238,10 +238,21 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
     }
   };
   const completionFocusFor = (day: number, dayConfig: ScenarioConfig): Feature | undefined => {
-    if (!dayConfig.featureFocus || day < dayConfig.featureFocus.startDay) return undefined;
-    return features.find((feature) => feature.completedAt === undefined);
+    // Swarming by itself only shares spare capacity. When it is paired with
+    // WIP limits and ranking, it also concentrates new admissions and borrowed
+    // capacity on the highest-ranked unfinished Feature.
+    const hasWipLimits = Object.keys(dayConfig.wipLimits ?? {}).length > 0;
+    if (!dayConfig.featureFocus || !dayConfig.backlogRanking || !hasWipLimits || day < dayConfig.featureFocus.startDay) return undefined;
+    const unfinished = features.filter((feature) => feature.completedAt === undefined);
+    if (dayConfig.backlogRanking) return unfinished.sort((first, second) => first.ranking - second.ranking)[0];
+    return unfinished[0];
   };
   const isFocused = (item: WorkItem, focus: Feature | undefined): boolean => !focus || item.featureId === focus.id;
+  const compareStagePriority = (stage: Stage, dayConfig: ScenarioConfig, first: WorkItem, second: WorkItem): number => {
+    if (dayConfig.backlogRanking) return compareBacklogRanking(first, second);
+    return (first.enteredAt[stage] ?? first.arrivedAt) - (second.enteredAt[stage] ?? second.arrivedAt)
+      || compareQueuePosition(first, second);
+  };
 
   const canEnter = (target: Stage, dayConfig: ScenarioConfig): boolean => {
     const wipLimit = dayConfig.wipLimits?.[target];
@@ -275,7 +286,7 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
     const target = nextStage(from, stages);
     const candidates = items
       .filter((item) => item.stage === from && item.status === "blocked")
-      .sort((a, b) => (a.enteredAt[from] ?? 0) - (b.enteredAt[from] ?? 0) || compareQueuePosition(a, b));
+      .sort((first, second) => compareStagePriority(from, dayConfig, first, second));
     for (const item of candidates) {
       if (target === testStage && item.type === "PBI" && !featureTestGateOpen(item, dayConfig)) continue;
       if (target === exitStage) complete(day, item, from);
@@ -287,7 +298,7 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
     const target = nextStage(from, stages);
     const candidates = items
       .filter((item) => item.stage === from && item.status === "waiting")
-      .sort((a, b) => (a.enteredAt[from] ?? 0) - (b.enteredAt[from] ?? 0) || compareQueuePosition(a, b));
+      .sort((first, second) => compareStagePriority(from, dayConfig, first, second));
     for (const item of candidates) {
       if (target === testStage && item.type === "PBI" && !featureTestGateOpen(item, dayConfig)) continue;
       if (target === exitStage) complete(day, item, from);
@@ -315,12 +326,12 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
     }
   };
 
-  const activateWork = (day: number, stage: ActiveStage, maximumConcurrency: number) => {
+  const activateWork = (day: number, stage: ActiveStage, maximumConcurrency: number, dayConfig: ScenarioConfig) => {
     const activeCount = concurrentItemCount(items, stage);
     const openSlots = Math.max(0, maximumConcurrency - activeCount);
     const waiting = items
       .filter((item) => item.stage === stage && item.status === "waiting")
-      .sort((a, b) => (a.enteredAt[stage] ?? 0) - (b.enteredAt[stage] ?? 0) || compareQueuePosition(a, b));
+      .sort((first, second) => compareStagePriority(stage, dayConfig, first, second));
     for (const item of waiting.slice(0, openSlots)) {
       item.status = "active";
       item.active = true;
@@ -330,10 +341,10 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
     }
   };
 
-  const processWork = (day: number, stage: ActiveStage, availableCapacity: number): number => {
+  const processWork = (day: number, stage: ActiveStage, availableCapacity: number, eligible: (item: WorkItem) => boolean = () => true): number => {
     let remainingCapacity = availableCapacity;
     while (remainingCapacity > 1e-9) {
-      const currentlyActive = items.filter((item) => item.stage === stage && item.status === "active");
+      const currentlyActive = items.filter((item) => item.stage === stage && item.status === "active" && eligible(item));
       if (!currentlyActive.length) return remainingCapacity;
       const equalShare = remainingCapacity / currentlyActive.length;
       let capacityApplied = 0;
@@ -358,6 +369,35 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
       remainingCapacity -= capacityApplied;
     }
     return 0;
+  };
+
+  const swarmingTargetFor = (sourceStage: ActiveStage, dayConfig: ScenarioConfig) => {
+    const candidates = active
+      .filter((stage) => stage !== sourceStage)
+      .map((stage) => {
+        const activeWork = items.filter((item) => item.stage === stage && item.status === "active");
+        const priorityWork = [...activeWork].sort((first, second) => dayConfig.backlogRanking
+          ? compareBacklogRanking(first, second)
+          : compareStagePriority(stage, dayConfig, first, second))[0];
+        return {
+          stage,
+          activeWork,
+          priorityWork,
+          remainingEffort: activeWork.reduce((total, item) => total + item.effortRemaining, 0),
+          workInStage: items.filter((item) => item.stage === stage && (item.status === "waiting" || item.status === "active")).length,
+        };
+      })
+      .filter((candidate) => candidate.priorityWork !== undefined);
+
+    return candidates.sort((first, second) => {
+      if (dayConfig.backlogRanking && first.priorityWork && second.priorityWork) {
+        const rankingComparison = compareBacklogRanking(first.priorityWork, second.priorityWork);
+        if (rankingComparison !== 0) return rankingComparison;
+      }
+      return second.workInStage - first.workInStage
+        || second.remainingEffort - first.remainingEffort
+        || stages.indexOf(second.stage) - stages.indexOf(first.stage);
+    })[0];
   };
 
   const recordItemState = (day: number, item: WorkItem) => {
@@ -423,10 +463,10 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
     const pushAllowance = poisson(dayConfig.arrivalRatePerDay, demandRandom) + (config.batchDays.includes(day) ? config.batchSize : 0);
 
     // Stable daily event order: completed work moves, policies are implicit in rates,
-    // admissions/pulls happen, then available stages begin work. Completion focus
-    // stops *new* Features at Backlog; it never pauses work already in flight.
-    // That lets a WIP-limited phase safely drain work inherited from an earlier
-    // push phase instead of deadlocking above its newly introduced WIP limits.
+    // admissions/pulls happen, then available stages begin work. The all-three
+    // policy concentrates *new* Features at Backlog; it never pauses work already
+    // in flight. That lets a WIP-limited phase safely drain work inherited from an
+    // earlier push phase instead of deadlocking above its newly introduced limits.
     [...stages.slice(1, -1)].reverse().forEach((stage) => {
       if (handoffs.has(stage)) pullHandoffWork(day, stage, dayConfig);
       else if (active.includes(stage)) moveBlocked(day, stage, dayConfig);
@@ -434,7 +474,7 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
     admitBacklogWork(day, pushAllowance, featureFocus, dayConfig);
     active.forEach((stage) => {
       const maximumConcurrency = dayConfig.operatingAssumptions?.[stage]?.maximumConcurrency ?? 16;
-      activateWork(day, stage, maximumConcurrency);
+      activateWork(day, stage, maximumConcurrency, dayConfig);
     });
     const operatingCapacity = active.map((stage) => {
       const baseCapacity = processingRateFor(stage, day, dayConfig);
@@ -447,44 +487,37 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
       operatingCapacity.map(({ stage, effectiveCapacity }) => [stage, processWork(day, stage, effectiveCapacity)]),
     );
     const capacityAssistance: CapacityAssistance[] = [];
-    if (featureFocus && developmentStage && testStage && developmentStage !== testStage) {
-      const focusedDevelopmentWork = items.some((item) => (
-        item.featureId === featureFocus.id
-        && item.stage === developmentStage
-        && (item.status === "waiting" || item.status === "active")
-      ));
-      const focusedTestWork = items.some((item) => (
-        item.featureId === featureFocus.id
-        && item.stage === testStage
-        && item.status === "active"
-      ));
-      if (!focusedDevelopmentWork && focusedTestWork && unusedCapacity[developmentStage] > 0) {
-        const offeredCapacity = unusedCapacity[developmentStage];
-        const unusedAssistance = processWork(day, testStage, offeredCapacity);
+    // WIP limits only govern admission, so their unused capacity stays idle.
+    // Swarming is the separate policy that lends spare capacity to the most
+    // constrained active stage. With ranking enabled, that help goes first to
+    // the stage containing the highest-ranked active work.
+    const swarmingActive = dayConfig.featureFocus !== undefined && day >= dayConfig.featureFocus.startDay;
+    if (swarmingActive) {
+      const effectiveness = dayConfig.wipAssistanceEffectiveness ?? 0.75;
+      for (const sourceStage of active) {
+        const offeredCapacity = unusedCapacity[sourceStage] * effectiveness;
+        if (offeredCapacity <= 1e-9) continue;
+        const target = swarmingTargetFor(sourceStage, dayConfig);
+        if (!target) continue;
+        const priorityRanking = dayConfig.backlogRanking ? target.priorityWork?.ranking : undefined;
+        const unusedAssistance = processWork(
+          day,
+          target.stage,
+          offeredCapacity,
+          (item) => priorityRanking === undefined || item.ranking === priorityRanking,
+        );
         const appliedCapacity = offeredCapacity - unusedAssistance;
-        unusedCapacity[developmentStage] = unusedAssistance;
+        unusedCapacity[sourceStage] -= appliedCapacity;
         if (appliedCapacity > 0) {
           capacityAssistance.push({
-            from: developmentStage,
-            to: testStage,
+            from: sourceStage,
+            to: target.stage,
             capacity: appliedCapacity,
-            effectiveness: 1,
-            reason: "completion-focus",
-            featureId: featureFocus.id,
+            effectiveness,
+            reason: "swarming",
+            featureId: target.priorityWork?.featureId,
           });
         }
-      }
-    }
-    const effectiveness = dayConfig.wipAssistanceEffectiveness ?? 0.75;
-    for (const sourceStage of active) {
-      if (dayConfig.wipLimits?.[sourceStage] === undefined || unusedCapacity[sourceStage] <= 0) continue;
-      const targetStage = nextActiveStage(sourceStage, config.workflow);
-      if (!targetStage) continue;
-      const offeredCapacity = unusedCapacity[sourceStage] * effectiveness;
-      const unusedAssistance = processWork(day, targetStage, offeredCapacity);
-      const appliedCapacity = offeredCapacity - unusedAssistance;
-      if (appliedCapacity > 0) {
-        capacityAssistance.push({ from: sourceStage, to: targetStage, capacity: appliedCapacity, effectiveness, reason: "wip-assistance" });
       }
     }
 

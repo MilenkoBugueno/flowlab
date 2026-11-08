@@ -1,9 +1,9 @@
 Feature: Flow interventions expose their trade-offs
 
-  Scenario: Swarming sends capacity to Test
-    Given the baseline scenario with a scheduled Test swarm
+  Scenario: A scheduled capacity transfer sends capacity to Test
+    Given the baseline scenario with a scheduled Test capacity transfer
     When I simulate 120 working days with seed 42
-    Then the swarm sends capacity from Development to Test
+    Then the scheduled transfer sends capacity from Development to Test
     And Test queue-days are lower than in the baseline for the same seed
 
   Scenario: WIP limits keep Integration and Test work bounded and visible

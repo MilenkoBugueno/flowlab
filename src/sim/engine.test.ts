@@ -228,7 +228,7 @@ describe("FlowLab simulation engine", () => {
     expect(() => validateMeanSeedCount(2.5)).toThrow("The mean CFD seed count must be a positive whole number.");
   });
 
-  it("uses unused WIP-limited Development capacity to help Test at the configured effectiveness", () => {
+  it("leaves excess WIP-limited capacity idle when Swarming is off", () => {
     const config = {
       ...scenarios.wip,
       horizonDays: 3,
@@ -243,29 +243,37 @@ describe("FlowLab simulation engine", () => {
       wipAssistanceEffectiveness: 0.75,
     };
     const result = runScenario(config, 1);
-    const assistance = result.snapshots[2].capacityAssistance?.[0];
-    expect(assistance).toMatchObject({ from: "Development", to: "Test", effectiveness: 0.75 });
-    expect(assistance?.capacity).toBeCloseTo(0.3);
-  });
+    const developmentCapacity = result.snapshots[2].operatingCapacity?.find((entry) => entry.stage === "Development");
 
-  it("does not assist Test when Development uses all of its capacity", () => {
-    const config = {
-      ...scenarios.wip,
-      horizonDays: 2,
-      warmupDays: 0,
-      arrivalRatePerDay: 0,
-      batchDays: [0],
-      batchSize: 4,
-      baseRates: { Development: 1.4, Test: 0.1 },
-      serviceEffort: { Development: { min: 1, max: 1 }, Test: { min: 5, max: 5 } },
-      wipLimits: { Development: 4, Test: 4 },
-    };
-    const result = runScenario(config, 1);
+    expect(developmentCapacity?.effectiveCapacity).toBeCloseTo(0.4);
     expect(result.snapshots.flatMap((snapshot) => snapshot.capacityAssistance ?? [])).toEqual([]);
   });
 
-  it("rejects WIP assistance effectiveness outside the supported range", () => {
-    expect(() => validateWipAssistanceEffectiveness(1.1)).toThrow("WIP assistance effectiveness must be between zero and one.");
+  it("lets Swarming lend spare capacity to a bottleneck without requiring Features", () => {
+    const config = {
+      ...scenarios.baseline,
+      horizonDays: 3,
+      warmupDays: 0,
+      arrivalRatePerDay: 0,
+      batchDays: [0],
+      batchSize: 1,
+      initialBacklog: { pbiCount: 1, bugCount: 0 },
+      initialInventory: undefined,
+      featureBacklog: { featureCount: 0, minPbisPerFeature: 1, maxPbisPerFeature: 1, baseBugEffort: 1, feedbackDelayEffortFactor: 0 },
+      featureFocus: { startDay: 0 },
+      baseRates: { Development: 0.4, Test: 0.1 },
+      serviceEffort: { Development: { min: 0.4, max: 0.4 }, Test: { min: 3, max: 3 } },
+    };
+    const result = runScenario(config, 1);
+    expect(result.snapshots[2].capacityAssistance).toContainEqual(expect.objectContaining({
+      from: "Development",
+      to: "Test",
+      reason: "swarming",
+    }));
+  });
+
+  it("rejects Swarming effectiveness outside the supported range", () => {
+    expect(() => validateWipAssistanceEffectiveness(1.1)).toThrow("Swarming effectiveness must be between zero and one.");
   });
 
   it("reduces capacity proportionally when concurrent work exceeds focus WIP", () => {
@@ -540,6 +548,49 @@ describe("FlowLab simulation engine", () => {
     expect(result.items.filter((item) => item.stage === "Backlog").every((item) => item.ranking === undefined || item.ranking > 1)).toBe(true);
   });
 
+  it("pulls ranked work through a constrained handoff before lower-ranked work", () => {
+    const header = {
+      ...scenarios.baseline,
+      horizonDays: 3,
+      warmupDays: 0,
+      arrivalRatePerDay: 0,
+      batchDays: [0],
+      batchSize: 2,
+      initialInventory: {},
+      featureBacklog: { featureCount: 2, minPbisPerFeature: 1, maxPbisPerFeature: 1, baseBugEffort: 1, feedbackDelayEffortFactor: 0 },
+      wipLimits: { Development: 2, Integration: 2, Test: 1 },
+      baseRates: { Development: 2, Test: 0.1 },
+      serviceEffort: { Development: { min: 1, max: 1 }, Test: { min: 5, max: 5 } },
+      operatingAssumptions: {
+        Development: { focusWip: 2, maximumConcurrency: 2, taskSwitchingLossRatio: 0 },
+        Test: { focusWip: 1, maximumConcurrency: 1, taskSwitchingLossRatio: 0 },
+      },
+    };
+    const config = {
+      ...header,
+      projectPhases: projectPhasesForPlan(header, [
+        { id: "unranked", durationDays: 2, interventions: { wipLimits: false, featureFocus: false, backlogRanking: false } },
+        { id: "ranked", durationDays: 1, interventions: { wipLimits: true, featureFocus: false, backlogRanking: true } },
+      ]),
+    };
+    const seed = Array.from({ length: 100 }, (_, index) => index + 1).find((candidate) => {
+      const preview = runScenario(config, candidate);
+      const rankOne = preview.items.find((item) => item.featureId === "FEATURE-001");
+      const rankTwo = preview.items.find((item) => item.featureId === "FEATURE-002");
+      return (rankTwo?.positionId ?? Number.POSITIVE_INFINITY) < (rankOne?.positionId ?? Number.NEGATIVE_INFINITY);
+    });
+    expect(seed).toBeDefined();
+
+    const result = runScenario(config, seed as number);
+    const rankOne = result.items.find((item) => item.featureId === "FEATURE-001");
+    const rankTwo = result.items.find((item) => item.featureId === "FEATURE-002");
+    const testEntry = result.events.find((event) => event.day === 2 && event.type === "entered-stage" && event.stage === "Test");
+
+    expect(rankTwo?.positionId).toBeLessThan(rankOne?.positionId ?? Number.NEGATIVE_INFINITY);
+    expect(testEntry && result.items.find((item) => item.id === testEntry.itemId)?.featureId).toBe("FEATURE-001");
+    expect(rankTwo?.stage).toBe("Integration");
+  });
+
   it("gates feature PBIs before Test and creates one delay-priced Bug for each tested PBI", () => {
     const result = runScenario({
       ...scenarios.baseline,
@@ -634,7 +685,7 @@ describe("FlowLab simulation engine", () => {
     expect(() => validateFeatureBacklog({ featureCount: 1, minPbisPerFeature: 8, maxPbisPerFeature: 5, baseBugEffort: 1, feedbackDelayEffortFactor: 0.1 })).toThrow("The maximum PBIs per feature must be at least the minimum.");
   });
 
-  it("focuses admissions on the oldest unfinished Feature", () => {
+  it("keeps multiple Feature admissions available when Swarming is used without Ranking", () => {
     const result = runScenario({
       ...scenarios.baseline,
       horizonDays: 1,
@@ -653,13 +704,13 @@ describe("FlowLab simulation engine", () => {
       },
     }, 42);
     const developmentAdmissions = result.events.filter((event) => event.type === "entered-stage" && event.stage === "Development");
-    expect(result.snapshots[0].featureFocus).toEqual({ id: "FEATURE-001", title: "Feature 001" });
-    expect(developmentAdmissions).toHaveLength(2);
-    expect(developmentAdmissions.every((event) => result.items.find((item) => item.id === event.itemId)?.featureId === "FEATURE-001")).toBe(true);
-    expect(result.items.filter((item) => item.featureId !== "FEATURE-001").every((item) => item.stage === "Backlog")).toBe(true);
+    const admittedFeatureIds = new Set(developmentAdmissions.map((event) => result.items.find((item) => item.id === event.itemId)?.featureId));
+
+    expect(result.snapshots[0].featureFocus).toBeUndefined();
+    expect(admittedFeatureIds).toEqual(new Set(["FEATURE-001", "FEATURE-002", "FEATURE-003"]));
   });
 
-  it("uses unused Development capacity to help Test for the focused Feature", () => {
+  it("combines WIP limits, Swarming, and ranking around the highest-ranked Feature", () => {
     const result = runScenario({
       ...scenarios.baseline,
       horizonDays: 3,
@@ -670,6 +721,8 @@ describe("FlowLab simulation engine", () => {
       initialInventory: {},
       featureBacklog: { featureCount: 2, minPbisPerFeature: 1, maxPbisPerFeature: 1, baseBugEffort: 1, feedbackDelayEffortFactor: 0 },
       featureFocus: { startDay: 0 },
+      backlogRanking: true,
+      wipLimits: { Development: 1, Integration: 1, Test: 1 },
       baseRates: { Development: 1, Test: 0.1 },
       serviceEffort: { Development: { min: 1, max: 1 }, Test: { min: 5, max: 5 } },
       operatingAssumptions: {
@@ -680,34 +733,47 @@ describe("FlowLab simulation engine", () => {
     expect(result.snapshots[2].capacityAssistance).toContainEqual(expect.objectContaining({
       from: "Development",
       to: "Test",
-      reason: "completion-focus",
+      reason: "swarming",
       featureId: "FEATURE-001",
     }));
     expect(result.dailyLog[2].featureFocus?.id).toBe("FEATURE-001");
+    expect(result.snapshots.every((snapshot) => (
+      snapshot.states.Development <= 1
+      && snapshot.states.Integration <= 1
+      && snapshot.states.Test <= 1
+    ))).toBe(true);
+    expect(result.events
+      .filter((event) => event.type === "entered-stage" && event.stage === "Development")
+      .every((event) => result.items.find((item) => item.id === event.itemId)?.featureId === "FEATURE-001"))
+      .toBe(true);
   });
 
-  it("leaves a workflow without Features unaffected by finishing focus", () => {
+  it("uses Swarming for non-Feature work without creating a completion focus", () => {
     const config = {
       ...scenarios.baseline,
-      horizonDays: 1,
+      horizonDays: 3,
       warmupDays: 0,
-      arrivalRatePerDay: 100,
-      batchDays: [],
-      batchSize: 0,
-      initialBacklog: { pbiCount: 2, bugCount: 0 },
+      arrivalRatePerDay: 0,
+      batchDays: [0],
+      batchSize: 1,
+      initialBacklog: { pbiCount: 1, bugCount: 0 },
       initialInventory: undefined,
       featureBacklog: { featureCount: 0, minPbisPerFeature: 1, maxPbisPerFeature: 1, baseBugEffort: 1, feedbackDelayEffortFactor: 0 },
       featureFocus: { startDay: 0 },
+      baseRates: { Development: 0.4, Test: 0.1 },
+      serviceEffort: { Development: { min: 0.4, max: 0.4 }, Test: { min: 3, max: 3 } },
     };
-    const focused = runScenario(config, 42);
+    const swarmed = runScenario(config, 42);
     const regular = runScenario({ ...config, featureFocus: undefined }, 42);
-    expect(focused.snapshots).toEqual(regular.snapshots);
-    expect(focused.snapshots[0].featureFocus).toBeUndefined();
+
+    expect(swarmed.snapshots.every((snapshot) => snapshot.featureFocus === undefined)).toBe(true);
+    expect(swarmed.snapshots.flatMap((snapshot) => snapshot.capacityAssistance ?? [])).toContainEqual(expect.objectContaining({ reason: "swarming" }));
+    expect(regular.snapshots.flatMap((snapshot) => snapshot.capacityAssistance ?? [])).toEqual([]);
   });
 
-  it("validates completion-focus start days", () => {
-    expect(() => validateFeatureFocus(scenarios.baseline, { startDay: -1 })).toThrow("The completion-focus start day must be within the simulation horizon.");
-    expect(() => validateFeatureFocus(scenarios.baseline, { startDay: scenarios.baseline.horizonDays })).toThrow("The completion-focus start day must be within the simulation horizon.");
+  it("validates Swarming start days", () => {
+    expect(() => validateFeatureFocus(scenarios.baseline, { startDay: -1 })).toThrow("The Swarming start day must be within the simulation horizon.");
+    expect(() => validateFeatureFocus(scenarios.baseline, { startDay: scenarios.baseline.horizonDays })).toThrow("The Swarming start day must be within the simulation horizon.");
   });
 
   it("rejects a maximum concurrency below focus WIP", () => {

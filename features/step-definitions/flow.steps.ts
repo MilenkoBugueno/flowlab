@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { Given, Then, When, World, setWorldConstructor } from "@cucumber/cucumber";
+import { compareCards } from "../../src/KanbanBoard";
 import { effectiveCapacityFor, feedbackBugEffortFor, processingRateFor, runScenario } from "../../src/sim/engine";
 import { runMeanScenario, validateMeanSeedCount } from "../../src/sim/mean";
 import { configForProjectDay, configFromProjectFile, createProjectFile, noPhaseInterventions, parseProjectFile, phaseInterventionsForEntry, phasePlanFromProject, phaseSettingsFor, projectPhasesForPlan } from "../../src/sim/project";
@@ -29,8 +30,6 @@ class FlowLabWorld extends World {
   meanSeedCountBeforeEdit?: number;
   arrivalRateError?: string;
   arrivalRateBeforeEdit?: number;
-  wipAssistanceError?: string;
-  wipAssistanceBeforeEdit?: number;
   operatingAssumptions?: OperatingAssumptions;
   operatingBaseCapacity?: number;
   operatingConcurrentItems?: number;
@@ -58,6 +57,7 @@ class FlowLabWorld extends World {
   phasePlanError?: string;
   showFeatureHandoffs?: boolean;
   rankingSeed?: number;
+  kanbanColumnRankings?: Array<Array<number | undefined>>;
 }
 
 setWorldConstructor(FlowLabWorld);
@@ -132,7 +132,7 @@ function downstreamWipConfig(): ScenarioConfig {
   };
 }
 
-function assistanceConfig(effectiveness = 0.75): ScenarioConfig {
+function idleCapacityWipConfig(): ScenarioConfig {
   return {
     ...scenarios.wip,
     horizonDays: 3,
@@ -144,22 +144,6 @@ function assistanceConfig(effectiveness = 0.75): ScenarioConfig {
     baseRates: { Development: 0.4, Test: 0.1 },
     serviceEffort: { Development: { min: 0.4, max: 0.4 }, Test: { min: 3, max: 3 } },
     wipLimits: { Development: 1, Test: 1 },
-    wipAssistanceEffectiveness: effectiveness,
-  };
-}
-
-function fullyUtilizedWipConfig(): ScenarioConfig {
-  return {
-    ...scenarios.wip,
-    horizonDays: 2,
-    warmupDays: 0,
-    arrivalRatePerDay: 0,
-    batchDays: [0],
-    batchSize: 4,
-    initialBacklog: { pbiCount: 4, bugCount: 0 },
-    baseRates: { Development: 1.4, Test: 0.1 },
-    serviceEffort: { Development: { min: 1, max: 1 }, Test: { min: 5, max: 5 } },
-    wipLimits: { Development: 4, Test: 4 },
   };
 }
 
@@ -234,17 +218,9 @@ function rankingBacklogConfig(overrides: Partial<ScenarioConfig> = {}): Scenario
   });
 }
 
-function finishingFocusConfig(overrides: Partial<ScenarioConfig> = {}): ScenarioConfig {
+function swarmingConfig(overrides: Partial<ScenarioConfig> = {}): ScenarioConfig {
   return featureFlowConfig({
-    horizonDays: 12,
-    featureBacklog: { featureCount: 3, minPbisPerFeature: 2, maxPbisPerFeature: 2, baseBugEffort: 1, feedbackDelayEffortFactor: 0 },
     featureFocus: { startDay: 0 },
-    baseRates: { Development: 2, Test: 1 },
-    serviceEffort: { Development: { min: 1, max: 1 }, Test: { min: 1, max: 1 } },
-    operatingAssumptions: {
-      Development: { focusWip: 2, maximumConcurrency: 2, taskSwitchingLossRatio: 0 },
-      Test: { focusWip: 2, maximumConcurrency: 2, taskSwitchingLossRatio: 0 },
-    },
     ...overrides,
   });
 }
@@ -295,7 +271,7 @@ Given("the standard FlowLab baseline scenario", function (this: FlowLabWorld) {
   this.config = withSeededBacklog(scenarios.baseline);
 });
 
-Given("the baseline scenario with a scheduled Test swarm", function (this: FlowLabWorld) {
+Given("the baseline scenario with a scheduled Test capacity transfer", function (this: FlowLabWorld) {
   this.config = withSeededBacklog({
     ...scenarios.baseline,
     swarm: { startDay: 45, durationDays: 10, sourceStage: "Development", targetStage: "Test", capacityShift: 0.5, rampUpEffectiveness: 0.75 },
@@ -342,7 +318,7 @@ Then("both simulations have identical daily snapshots", function (this: FlowLabW
   assert.deepEqual(resultFor(this).snapshots, this.secondResult?.snapshots);
 });
 
-Then("the swarm sends capacity from Development to Test", function (this: FlowLabWorld) {
+Then("the scheduled transfer sends capacity from Development to Test", function (this: FlowLabWorld) {
   const result = resultFor(this);
   assert.ok(result.config.swarm, "Expected selected scenario to include a swarm");
   assert.equal(result.config.swarm.sourceStage, "Development");
@@ -611,11 +587,11 @@ Then("Test uses a daily processing rate of {float} while the incident is active"
   assert.equal(processingRateFor("Test", result.config.incident.endDay, result.config), rate);
 });
 
-When("I set a swarm from Development to Test starting on day {int} for {int} days", function (this: FlowLabWorld, startDay: number, durationDays: number) {
+When("I set a scheduled capacity transfer from Development to Test starting on day {int} for {int} days", function (this: FlowLabWorld, startDay: number, durationDays: number) {
   this.pendingSwarm = { sourceStage: "Development", targetStage: "Test", startDay, durationDays, capacityShift: 0.5, rampUpEffectiveness: 0.75 };
 });
 
-When("I set the swarm capacity shift to {float} and the first-day effectiveness to {float}", function (this: FlowLabWorld, capacityShift: number, rampUpEffectiveness: number) {
+When("I set the transfer capacity shift to {float} and the first-day effectiveness to {float}", function (this: FlowLabWorld, capacityShift: number, rampUpEffectiveness: number) {
   assert.ok(this.config, "Choose a scenario before editing interventions");
   assert.ok(this.pendingSwarm, "Choose a swarm before editing it");
   this.config = withSimulationSettings(this.config, {
@@ -631,14 +607,14 @@ Then("the simulation temporarily shifts {float} daily capacity from Development 
   assert.equal(processingRateFor("Test", steadyDay, result.config), result.config.baseRates.Test! + shift);
 });
 
-Then("Test receives {float} daily capacity from the swarm on its first day", function (this: FlowLabWorld, contribution: number) {
+Then("Test receives {float} daily capacity from the scheduled transfer on its first day", function (this: FlowLabWorld, contribution: number) {
   const result = resultFor(this);
   assert.ok(result.config.swarm, "Expected a configured swarm");
   const firstDayRate = processingRateFor("Test", result.config.swarm.startDay, result.config);
   assert.ok(Math.abs(firstDayRate - result.config.baseRates.Test! - contribution) < 1e-9);
 });
 
-Then("the swarm stops after {int} days", function (this: FlowLabWorld, duration: number) {
+Then("the scheduled transfer stops after {int} days", function (this: FlowLabWorld, duration: number) {
   const result = resultFor(this);
   assert.ok(result.config.swarm, "Expected a configured swarm");
   const afterSwarm = result.config.swarm.startDay + duration;
@@ -646,7 +622,7 @@ Then("the swarm stops after {int} days", function (this: FlowLabWorld, duration:
   assert.equal(processingRateFor("Test", afterSwarm, result.config), result.config.baseRates.Test);
 });
 
-When("I save a swarm that starts and ends in the same stage", function (this: FlowLabWorld) {
+When("I save a scheduled capacity transfer that starts and ends in the same stage", function (this: FlowLabWorld) {
   assert.ok(this.config, "Choose a scenario before editing interventions");
   try {
     this.config = withSimulationSettings(this.config, {
@@ -657,8 +633,8 @@ When("I save a swarm that starts and ends in the same stage", function (this: Fl
   }
 });
 
-Then("I am told that a swarm needs different source and target stages", function (this: FlowLabWorld) {
-  assert.equal(this.interventionError, "A swarm needs different source and target stages.");
+Then("I am told that a scheduled capacity transfer needs different source and target stages", function (this: FlowLabWorld) {
+  assert.equal(this.interventionError, "A scheduled capacity transfer needs different source and target stages.");
 });
 
 Then("the current intervention settings remain unchanged", function (this: FlowLabWorld) {
@@ -858,86 +834,37 @@ Then("no item enters Test above its WIP limit", function (this: FlowLabWorld) {
 });
 
 Given("Development has a WIP limit and unused daily processing capacity", function (this: FlowLabWorld) {
-  this.config = assistanceConfig();
+  this.config = idleCapacityWipConfig();
 });
 
 Given("Test has work waiting to be processed", function (this: FlowLabWorld) {
   assert.ok(this.config?.wipLimits?.Test !== undefined);
 });
 
-When("I simulate a working day with the default WIP assistance effectiveness", function (this: FlowLabWorld) {
+When("I simulate the WIP-limited workflow", function (this: FlowLabWorld) {
   assert.ok(this.config, "Expected a WIP-limited workflow");
   this.result = runScenario(this.config, 1);
 });
 
-Then("Development serves its own work before helping Test", function (this: FlowLabWorld) {
+Then("Development serves its own work before becoming idle", function (this: FlowLabWorld) {
   const result = resultFor(this);
   assert.ok(result.events.some((event) => event.stage === "Development" && event.type === "blocked"));
-  assert.ok(result.snapshots.some((snapshot) => snapshot.capacityAssistance?.some((assistance) => assistance.from === "Development")));
 });
 
-Then("the unused Development capacity is applied to Test at {float} effectiveness", function (this: FlowLabWorld, effectiveness: number) {
-  const assistance = resultFor(this).snapshots.flatMap((snapshot) => snapshot.capacityAssistance ?? []).find((entry) => entry.from === "Development" && entry.to === "Test");
-  assert.ok(assistance, "Expected Development to assist Test");
-  assert.equal(assistance.effectiveness, effectiveness);
-  assert.ok(Math.abs(assistance.capacity - 0.4 * effectiveness) < 1e-9);
-});
-
-Then("the assistance only helps the next active stage, Test", function (this: FlowLabWorld) {
-  const assistance = resultFor(this).snapshots.flatMap((snapshot) => snapshot.capacityAssistance ?? []);
-  assert.ok(assistance.every((entry) => entry.from === "Development" && entry.to === "Test"));
-});
-
-Given("Development has a WIP limit and enough work to use all of its daily processing capacity", function (this: FlowLabWorld) {
-  this.config = fullyUtilizedWipConfig();
-});
-
-Then("Development does not provide capacity assistance to Test", function (this: FlowLabWorld) {
+Then("no capacity is transferred from Development to Test", function (this: FlowLabWorld) {
   const assistance = resultFor(this).snapshots.flatMap((snapshot) => snapshot.capacityAssistance ?? []);
   assert.ok(!assistance.some((entry) => entry.from === "Development" && entry.to === "Test"));
 });
 
-Given("I am editing the WIP limit settings", function (this: FlowLabWorld) {
-  this.config = assistanceConfig();
-  this.wipAssistanceBeforeEdit = this.config.wipAssistanceEffectiveness;
-});
-
-When("I set the WIP assistance effectiveness to {float}", function (this: FlowLabWorld, effectiveness: number) {
-  assert.ok(this.config, "Expected a WIP-limited workflow");
-  this.config = withSimulationSettings(this.config, { wipAssistanceEffectiveness: effectiveness });
-});
-
-Given("Development has {float} unused daily processing capacity", function (this: FlowLabWorld, capacity: number) {
-  assert.equal(this.config?.baseRates.Development, capacity);
-});
-
-When("I simulate a working day with a WIP assistance effectiveness of {float}", function (this: FlowLabWorld, effectiveness: number) {
-  assert.ok(this.config, "Expected a WIP-limited workflow");
-  assert.equal(this.config.wipAssistanceEffectiveness, effectiveness);
-  this.result = runScenario(this.config, 1);
-});
-
-Then("Test receives {float} daily processing capacity from Development", function (this: FlowLabWorld, capacity: number) {
-  const assistance = resultFor(this).snapshots.flatMap((snapshot) => snapshot.capacityAssistance ?? []).find((entry) => entry.from === "Development" && entry.to === "Test");
-  assert.ok(assistance, "Expected Development to assist Test");
-  assert.ok(Math.abs(assistance.capacity - capacity) < 1e-9);
-});
-
-When("I save a WIP assistance effectiveness of {float}", function (this: FlowLabWorld, effectiveness: number) {
-  assert.ok(this.config, "Expected a WIP-limited workflow");
-  try {
-    this.config = withSimulationSettings(this.config, { wipAssistanceEffectiveness: effectiveness });
-  } catch (error) {
-    this.wipAssistanceError = error instanceof Error ? error.message : String(error);
-  }
-});
-
-Then("I am told that WIP assistance effectiveness must be between zero and one", function (this: FlowLabWorld) {
-  assert.equal(this.wipAssistanceError, "WIP assistance effectiveness must be between zero and one.");
-});
-
-Then("the current WIP assistance settings remain unchanged", function (this: FlowLabWorld) {
-  assert.equal(this.config?.wipAssistanceEffectiveness, this.wipAssistanceBeforeEdit);
+Then("the unused Development capacity remains idle", function (this: FlowLabWorld) {
+  const result = resultFor(this);
+  const idleSnapshot = result.snapshots.find((snapshot) => (
+    snapshot.active.Development === 0
+    && snapshot.active.Test > 0
+    && snapshot.operatingCapacity?.some((capacity) => capacity.stage === "Development" && Math.abs(capacity.effectiveCapacity - 0.4) < 1e-9)
+  ));
+  assert.ok(idleSnapshot, "Expected available Development capacity while Test is active");
+  assert.deepEqual(idleSnapshot.capacityAssistance ?? [], []);
 });
 
 function operationalConcurrencyConfig(maximumConcurrency: number, wipLimit?: number): ScenarioConfig {
@@ -1833,22 +1760,126 @@ Then("feature metrics count the feature once", function (this: FlowLabWorld) {
   assert.equal(resultFor(this).metrics.completedFeatures, 1);
 });
 
-Given("a feature-backed backlog with three Features in creation order", function (this: FlowLabWorld) {
-  this.config = finishingFocusConfig();
+Given("Swarming is active with spare Development capacity and active Test work", function (this: FlowLabWorld) {
+  this.config = swarmingConfig({
+    horizonDays: 1,
+    arrivalRatePerDay: 0,
+    batchDays: [],
+    batchSize: 0,
+    initialInventory: { Test: { pbiCount: 1, bugCount: 0 } },
+    featureBacklog: { featureCount: 0, minPbisPerFeature: 1, maxPbisPerFeature: 1, baseBugEffort: 1, feedbackDelayEffortFactor: 0 },
+    baseRates: { Development: 1, Test: 0.1 },
+    serviceEffort: { Development: { min: 1, max: 1 }, Test: { min: 5, max: 5 } },
+    operatingAssumptions: {
+      Development: { focusWip: 1, maximumConcurrency: 1, taskSwitchingLossRatio: 0 },
+      Test: { focusWip: 1, maximumConcurrency: 1, taskSwitchingLossRatio: 0 },
+    },
+  });
 });
 
-Given("Swarming begins on day {int}", function (this: FlowLabWorld, startDay: number) {
-  assert.ok(this.config, "Expected a feature-backed configuration");
-  this.config = { ...this.config, featureFocus: { startDay } };
+When("I simulate the Swarming workflow", function (this: FlowLabWorld) {
+  assert.ok(this.config, "Expected a Swarming configuration");
+  this.result = runScenario(this.config, 42);
 });
 
-When("I simulate the first working day", function (this: FlowLabWorld) {
-  assert.ok(this.config, "Expected a configured simulation");
-  this.result = runScenario({ ...this.config, horizonDays: 1 }, 42);
+Then("unused Development capacity is reassigned to Test", function (this: FlowLabWorld) {
+  const assistance = resultFor(this).snapshots.flatMap((snapshot) => snapshot.capacityAssistance ?? []).find((entry) => (
+    entry.reason === "swarming" && entry.from === "Development" && entry.to === "Test"
+  ));
+  assert.ok(assistance, "Expected Development to assist the active Test bottleneck");
+  assert.ok(assistance.capacity > 0);
 });
 
-Then("Feature 001 is the current finishing focus", function (this: FlowLabWorld) {
-  assert.equal(resultFor(this).snapshots.at(-1)?.featureFocus?.id, "FEATURE-001");
+Then("the transfer is recorded as a swarm without a Feature focus", function (this: FlowLabWorld) {
+  const result = resultFor(this);
+  const assistance = result.snapshots.flatMap((snapshot) => snapshot.capacityAssistance ?? []).find((entry) => entry.reason === "swarming");
+  assert.equal(assistance?.featureId, undefined);
+  assert.ok(result.snapshots.every((snapshot) => snapshot.featureFocus === undefined));
+});
+
+Given("a feature-backed backlog with WIP limits and Swarming but without backlog ranking", function (this: FlowLabWorld) {
+  this.config = swarmingConfig({
+    horizonDays: 1,
+    arrivalRatePerDay: 0,
+    batchDays: [0],
+    batchSize: 3,
+    initialInventory: {},
+    featureBacklog: { featureCount: 3, minPbisPerFeature: 1, maxPbisPerFeature: 1, baseBugEffort: 1, feedbackDelayEffortFactor: 0 },
+    wipLimits: { Development: 3, Integration: 3, Test: 3 },
+    baseRates: { Development: 1, Test: 1 },
+    serviceEffort: { Development: { min: 5, max: 5 }, Test: { min: 5, max: 5 } },
+    operatingAssumptions: {
+      Development: { focusWip: 3, maximumConcurrency: 3, taskSwitchingLossRatio: 0 },
+      Test: { focusWip: 3, maximumConcurrency: 3, taskSwitchingLossRatio: 0 },
+    },
+  });
+});
+
+Then("work from more than one Feature is admitted into Development", function (this: FlowLabWorld) {
+  const result = resultFor(this);
+  const admittedFeatures = new Set(result.events
+    .filter((event) => event.type === "entered-stage" && event.stage === "Development")
+    .map((event) => result.items.find((item) => item.id === event.itemId)?.featureId)
+    .filter((featureId): featureId is string => featureId !== undefined));
+  assert.ok(admittedFeatures.size > 1);
+});
+
+Then("no Feature admission focus is shown", function (this: FlowLabWorld) {
+  assert.ok(resultFor(this).snapshots.every((snapshot) => snapshot.featureFocus === undefined));
+});
+
+Given("Swarming is active but Development has work of its own", function (this: FlowLabWorld) {
+  this.config = swarmingConfig({
+    horizonDays: 1,
+    arrivalRatePerDay: 0,
+    batchDays: [],
+    batchSize: 0,
+    initialInventory: {
+      Development: { pbiCount: 1, bugCount: 0 },
+      Test: { pbiCount: 1, bugCount: 0 },
+    },
+    featureBacklog: { featureCount: 0, minPbisPerFeature: 1, maxPbisPerFeature: 1, baseBugEffort: 1, feedbackDelayEffortFactor: 0 },
+    baseRates: { Development: 1, Test: 0.1 },
+    serviceEffort: { Development: { min: 5, max: 5 }, Test: { min: 5, max: 5 } },
+    operatingAssumptions: {
+      Development: { focusWip: 1, maximumConcurrency: 1, taskSwitchingLossRatio: 0 },
+      Test: { focusWip: 1, maximumConcurrency: 1, taskSwitchingLossRatio: 0 },
+    },
+  });
+});
+
+Then("Development does not lend capacity before its own work is complete", function (this: FlowLabWorld) {
+  const result = resultFor(this);
+  assert.equal(result.snapshots[0].active.Development, 1);
+  assert.ok(!result.snapshots.flatMap((snapshot) => snapshot.capacityAssistance ?? []).some((entry) => entry.from === "Development" && entry.to === "Test"));
+});
+
+Given("WIP limits, Swarming, and backlog ranking are active for ranked Features", function (this: FlowLabWorld) {
+  this.config = swarmingConfig({
+    horizonDays: 3,
+    arrivalRatePerDay: 0,
+    batchDays: [0],
+    batchSize: 3,
+    initialInventory: {},
+    featureBacklog: { featureCount: 3, minPbisPerFeature: 1, maxPbisPerFeature: 1, baseBugEffort: 1, feedbackDelayEffortFactor: 0 },
+    wipLimits: { Development: 1, Integration: 1, Test: 1 },
+    backlogRanking: true,
+    baseRates: { Development: 1, Test: 0.1 },
+    serviceEffort: { Development: { min: 1, max: 1 }, Test: { min: 5, max: 5 } },
+    operatingAssumptions: {
+      Development: { focusWip: 1, maximumConcurrency: 1, taskSwitchingLossRatio: 0 },
+      Test: { focusWip: 1, maximumConcurrency: 1, taskSwitchingLossRatio: 0 },
+    },
+  });
+});
+
+When("I simulate the ranked Swarming workflow", function (this: FlowLabWorld) {
+  assert.ok(this.config, "Expected a ranked Swarming configuration");
+  this.result = runScenario(this.config, 42);
+});
+
+Then("Feature 001 is the current ranked focus", function (this: FlowLabWorld) {
+  assert.equal(resultFor(this).snapshots[0].featureFocus?.id, "FEATURE-001");
 });
 
 Then("only Feature 001 work is admitted from Backlog into Development", function (this: FlowLabWorld) {
@@ -1858,260 +1889,15 @@ Then("only Feature 001 work is admitted from Backlog into Development", function
   assert.ok(admissions.every((event) => result.items.find((item) => item.id === event.itemId)?.featureId === "FEATURE-001"));
 });
 
-Then("Feature 002 and Feature 003 work remain in Backlog", function (this: FlowLabWorld) {
-  const result = resultFor(this);
-  assert.ok(result.items.filter((item) => item.featureId === "FEATURE-002" || item.featureId === "FEATURE-003").every((item) => item.stage === "Backlog"));
-});
-
-Given("Feature 001 has unfinished PBIs or feedback Bugs", function (this: FlowLabWorld) {
-  this.config = finishingFocusConfig({
-    horizonDays: 2,
-    featureBacklog: { featureCount: 3, minPbisPerFeature: 3, maxPbisPerFeature: 3, baseBugEffort: 1, feedbackDelayEffortFactor: 0 },
-    baseRates: { Development: 0.5, Test: 1 },
-    serviceEffort: { Development: { min: 4, max: 4 }, Test: { min: 1, max: 1 } },
-  });
-});
-
-Given("Development has free capacity", function (this: FlowLabWorld) {
-  assert.ok(this.config, "Expected a configured simulation");
-});
-
-When("I simulate another working day with Swarming active", function (this: FlowLabWorld) {
-  assert.ok(this.config, "Expected a configured simulation");
-  this.result = runScenario(this.config, 42);
-});
-
-Then("no PBI or Bug belonging to a later Feature enters Development", function (this: FlowLabWorld) {
-  const result = resultFor(this);
-  const laterFeatureItemIds = new Set(result.items.filter((item) => item.featureId && item.featureId !== "FEATURE-001").map((item) => item.id));
-  assert.equal(result.events.filter((event) => event.type === "entered-stage" && event.stage === "Development" && laterFeatureItemIds.has(event.itemId)).length, 0);
-});
-
-Then("available capacity is used only for Feature 001 work when such work is ready", function (this: FlowLabWorld) {
-  const result = resultFor(this);
-  const started = result.events.filter((event) => event.type === "started" && event.stage === "Development");
-  assert.ok(started.length > 0);
-  assert.ok(started.every((event) => result.items.find((item) => item.id === event.itemId)?.featureId === "FEATURE-001"));
-});
-
-Given("the focused Feature has multiple PBIs in Development", function (this: FlowLabWorld) {
-  this.config = finishingFocusConfig({
-    horizonDays: 6,
-    featureBacklog: { featureCount: 2, minPbisPerFeature: 3, maxPbisPerFeature: 3, baseBugEffort: 1, feedbackDelayEffortFactor: 0 },
-    wipLimits: { Development: 3, Integration: 3, Test: 1 },
-  });
-});
-
-When("its PBIs complete Development at different times", function (this: FlowLabWorld) {
-  assert.ok(this.config, "Expected a configured simulation");
-  this.result = runScenario(this.config, 42);
-});
-
-Then("completed PBIs wait in Integration until the focused Feature's test gate opens", function (this: FlowLabWorld) {
-  const result = resultFor(this);
-  const firstFeature = result.features[0];
-  const developedOnDayZero = result.items.filter((item) => firstFeature.pbiIds.includes(item.id) && item.developedAt === 0);
-  assert.equal(developedOnDayZero.length, 2);
-  assert.equal(result.snapshots[1].states.Integration, 2);
-  assert.equal(result.snapshots[1].states.Test, 0);
-});
-
-Then("no later Feature is admitted while those PBIs wait", function (this: FlowLabWorld) {
-  const result = resultFor(this);
-  const earlyAdmissions = result.events.filter((event) => event.type === "entered-stage" && event.stage === "Development" && event.day <= 2);
-  assert.ok(earlyAdmissions.every((event) => result.items.find((item) => item.id === event.itemId)?.featureId === "FEATURE-001"));
-});
-
-Then("the focused PBIs enter Test according to the Test WIP limit and concurrency", function (this: FlowLabWorld) {
-  const result = resultFor(this);
-  const firstFeature = result.features[0];
-  assert.ok(result.events.some((event) => event.type === "entered-stage" && event.stage === "Test" && firstFeature.pbiIds.includes(event.itemId)));
-  assert.ok(result.snapshots.every((snapshot) => snapshot.states.Test <= 1));
-});
-
-Given("a focused Feature PBI completes Test and creates a feedback Bug", function (this: FlowLabWorld) {
-  this.config = finishingFocusConfig({
-    horizonDays: 7,
-    featureBacklog: { featureCount: 2, minPbisPerFeature: 1, maxPbisPerFeature: 1, baseBugEffort: 1, feedbackDelayEffortFactor: 0 },
-    baseRates: { Development: 1, Test: 1 },
-    operatingAssumptions: {
-      Development: { focusWip: 1, maximumConcurrency: 1, taskSwitchingLossRatio: 0 },
-      Test: { focusWip: 1, maximumConcurrency: 1, taskSwitchingLossRatio: 0 },
-    },
-  });
-});
-
-When("the feedback Bug is ready to enter Development", function (this: FlowLabWorld) {
-  assert.ok(this.config, "Expected a configured simulation");
-  this.result = runScenario(this.config, 42);
-});
-
-Then("the feedback Bug is admitted before work from a later Feature", function (this: FlowLabWorld) {
-  const result = resultFor(this);
-  const bug = result.items.find((item) => item.type === "Bug" && item.featureId === "FEATURE-001");
-  assert.ok(bug, "Expected the focused Feature to generate a Bug");
-  const bugAdmission = result.events.find((event) => event.type === "entered-stage" && event.stage === "Development" && event.itemId === bug.id);
-  assert.ok(bugAdmission, "Expected the Bug to enter Development");
-  const laterAdmission = result.events.find((event) => event.type === "entered-stage" && event.stage === "Development" && result.items.find((item) => item.id === event.itemId)?.featureId === "FEATURE-002");
-  assert.ok(!laterAdmission || bugAdmission.day < laterAdmission.day);
-});
-
-Then("the next Feature remains stopped until that Bug reaches Done", function (this: FlowLabWorld) {
-  const result = resultFor(this);
-  const bug = result.items.find((item) => item.type === "Bug" && item.featureId === "FEATURE-001");
-  const nextFeatureAdmission = result.events.find((event) => event.type === "entered-stage" && event.stage === "Development" && result.items.find((item) => item.id === event.itemId)?.featureId === "FEATURE-002");
-  assert.ok(bug?.completedAt !== undefined);
-  assert.ok(!nextFeatureAdmission || nextFeatureAdmission.day > (bug?.completedAt ?? Number.POSITIVE_INFINITY));
-});
-
-Given("the focused Feature has ready work in Test", function (this: FlowLabWorld) {
-  this.config = finishingFocusConfig({
-    horizonDays: 3,
-    featureBacklog: { featureCount: 2, minPbisPerFeature: 1, maxPbisPerFeature: 1, baseBugEffort: 1, feedbackDelayEffortFactor: 0 },
-    baseRates: { Development: 1, Test: 0.1 },
-    serviceEffort: { Development: { min: 1, max: 1 }, Test: { min: 5, max: 5 } },
-    operatingAssumptions: {
-      Development: { focusWip: 1, maximumConcurrency: 1, taskSwitchingLossRatio: 0 },
-      Test: { focusWip: 1, maximumConcurrency: 1, taskSwitchingLossRatio: 0 },
-    },
-  });
-});
-
-Given("no focused Feature work can use Development capacity today", function (this: FlowLabWorld) {
-  assert.ok(this.config, "Expected a configured simulation");
-});
-
-When("I simulate a working day with Swarming active", function (this: FlowLabWorld) {
-  assert.ok(this.config, "Expected a configured simulation");
-  this.result = runScenario(this.config, 42);
-});
-
-Then("available Development capacity is reassigned to Test for the focused Feature", function (this: FlowLabWorld) {
-  const assistance = resultFor(this).snapshots[2].capacityAssistance?.find((entry) => entry.reason === "completion-focus");
-  assert.deepEqual(assistance && { from: assistance.from, to: assistance.to, featureId: assistance.featureId }, { from: "Development", to: "Test", featureId: "FEATURE-001" });
-  assert.ok((assistance?.capacity ?? 0) > 0);
-});
-
-Then("the capacity transfer is recorded as a completion-focus swarm", function (this: FlowLabWorld) {
-  assert.ok(resultFor(this).snapshots.flatMap((snapshot) => snapshot.capacityAssistance ?? []).some((entry) => entry.reason === "completion-focus"));
-});
-
-Given("the focused Feature has work ready in Development", function (this: FlowLabWorld) {
-  this.config = finishingFocusConfig({
-    horizonDays: 1,
-    featureBacklog: { featureCount: 2, minPbisPerFeature: 2, maxPbisPerFeature: 2, baseBugEffort: 1, feedbackDelayEffortFactor: 0 },
-  });
-});
-
-Then("Development uses its capacity for focused Feature work before swarming Test", function (this: FlowLabWorld) {
-  const result = resultFor(this);
-  assert.equal(result.snapshots[0].operatingCapacity?.find((entry) => entry.stage === "Development")?.concurrentItems, 2);
-  assert.equal(result.snapshots[0].capacityAssistance?.some((entry) => entry.reason === "completion-focus"), false);
-});
-
-Given("Feature 001 is the finishing focus", function (this: FlowLabWorld) {
-  this.config = finishingFocusConfig({
-    horizonDays: 8,
-    featureBacklog: { featureCount: 2, minPbisPerFeature: 1, maxPbisPerFeature: 1, baseBugEffort: 1, feedbackDelayEffortFactor: 0 },
-    baseRates: { Development: 1, Test: 1 },
-    operatingAssumptions: {
-      Development: { focusWip: 1, maximumConcurrency: 1, taskSwitchingLossRatio: 0 },
-      Test: { focusWip: 1, maximumConcurrency: 1, taskSwitchingLossRatio: 0 },
-    },
-  });
-});
-
-Given("every Feature 001 PBI and feedback Bug has reached Done", function (this: FlowLabWorld) {
-  assert.ok(this.config, "Expected a configured simulation");
-});
-
-Then("Feature 001 is recorded as complete", function (this: FlowLabWorld) {
-  assert.equal(resultFor(this).features[0].completedAt, 6);
-});
-
-Then("Feature 002 becomes the finishing focus", function (this: FlowLabWorld) {
-  assert.equal(resultFor(this).snapshots[7].featureFocus?.id, "FEATURE-002");
-});
-
-Then("Feature 002 work may be admitted from Backlog into Development", function (this: FlowLabWorld) {
-  const result = resultFor(this);
-  assert.ok(result.events.some((event) => event.type === "entered-stage" && event.stage === "Development" && event.day === 7 && result.items.find((item) => item.id === event.itemId)?.featureId === "FEATURE-002"));
-});
-
-Given("Swarming is active", function (this: FlowLabWorld) {
-  this.config = finishingFocusConfig();
-});
-
-Given("Development, Integration, and Test each have an explicit WIP limit", function (this: FlowLabWorld) {
-  assert.ok(this.config, "Expected a configured simulation");
-  this.config = { ...this.config, wipLimits: { Development: 1, Integration: 1, Test: 1 } };
-});
-
-When("I simulate the workflow", function (this: FlowLabWorld) {
-  assert.ok(this.config, "Expected a configured simulation");
-  this.result = runScenario(this.config, 42);
-});
-
-Then("no focused Feature item enters a stage above that stage's WIP limit", function (this: FlowLabWorld) {
-  const result = resultFor(this);
-  assert.ok(result.snapshots.every((snapshot) => snapshot.states.Development <= 1 && snapshot.states.Integration <= 1 && snapshot.states.Test <= 1));
-});
-
-Then("work blocked by a full downstream WIP limit remains visibly upstream", function (this: FlowLabWorld) {
-  assert.ok(resultFor(this).snapshots.some((snapshot) => snapshot.states.Integration > 0));
-});
-
-Given("a backlog containing no Features", function (this: FlowLabWorld) {
-  this.config = finishingFocusConfig({
-    horizonDays: 1,
-    featureBacklog: { featureCount: 0, minPbisPerFeature: 1, maxPbisPerFeature: 1, baseBugEffort: 1, feedbackDelayEffortFactor: 0 },
-    initialInventory: undefined,
-    initialBacklog: { pbiCount: 2, bugCount: 0 },
-  });
-});
-
-When("I activate Swarming", function (this: FlowLabWorld) {
-  assert.ok(this.config, "Expected a configured simulation");
-  this.result = runScenario(this.config, 42);
-});
-
-Then("regular backlog admission and capacity behavior continue unchanged", function (this: FlowLabWorld) {
-  const result = resultFor(this);
-  assert.equal(result.snapshots[0].states.Development, 2);
-  assert.equal(result.events.filter((event) => event.type === "entered-stage" && event.stage === "Development").length, 2);
-});
-
-Then("no finishing focus is shown", function (this: FlowLabWorld) {
-  assert.ok(resultFor(this).snapshots.every((snapshot) => snapshot.featureFocus === undefined));
-});
-
-Given("Swarming is active for a feature-backed backlog", function (this: FlowLabWorld) {
-  this.config = finishingFocusConfig({
-    horizonDays: 3,
-    featureBacklog: { featureCount: 2, minPbisPerFeature: 1, maxPbisPerFeature: 1, baseBugEffort: 1, feedbackDelayEffortFactor: 0 },
-    baseRates: { Development: 1, Test: 0.1 },
-    serviceEffort: { Development: { min: 1, max: 1 }, Test: { min: 5, max: 5 } },
-    operatingAssumptions: {
-      Development: { focusWip: 1, maximumConcurrency: 1, taskSwitchingLossRatio: 0 },
-      Test: { focusWip: 1, maximumConcurrency: 1, taskSwitchingLossRatio: 0 },
-    },
-  });
-});
-
-When("I inspect a simulated day", function (this: FlowLabWorld) {
-  assert.ok(this.config, "Expected a configured simulation");
-  this.result = runScenario(this.config, 42);
-});
-
-Then("the CFD day inspector identifies the current finishing focus", function (this: FlowLabWorld) {
-  const result = resultFor(this);
-  assert.equal(result.snapshots[2].featureFocus?.title, "Feature 001");
-});
-
-Then("the daily log identifies the focused Feature and any completion-focus swarm", function (this: FlowLabWorld) {
-  const result = resultFor(this);
-  assert.equal(result.dailyLog[2].featureFocus?.id, "FEATURE-001");
-  assert.ok(result.snapshots[2].capacityAssistance?.some((entry) => entry.reason === "completion-focus"));
+Then("spare capacity supports Feature 001 at the Test bottleneck", function (this: FlowLabWorld) {
+  const assistance = resultFor(this).snapshots.flatMap((snapshot) => snapshot.capacityAssistance ?? []).find((entry) => (
+    entry.reason === "swarming"
+    && entry.from === "Development"
+    && entry.to === "Test"
+    && entry.featureId === "FEATURE-001"
+  ));
+  assert.ok(assistance, "Expected spare Development capacity to support the highest-ranked Feature");
+  assert.ok(assistance.capacity > 0);
 });
 
 Given("a project file with {int} initial Features and seed {int}", function (this: FlowLabWorld, featureCount: number, seed: number) {
@@ -2205,8 +1991,12 @@ Given("a project file with feature-backed initial work", function (this: FlowLab
   this.projectFile = { formatVersion: 1, name: "Focus", seed: 42, config: this.config, phases: [] };
 });
 
-Given("a WIP Limits plus Swarming phase from day {int} through day {int}", function (this: FlowLabWorld, startDay: number, endDay: number) {
-  addProjectPhase(this, "combined", "WIP Limits + Swarming", startDay, endDay, { wipLimits: { Development: 5, Integration: 5, Test: 5 }, featureFocus: { startDay } });
+Given("a WIP Limits plus Swarming plus Backlog Ranking phase from day {int} through day {int}", function (this: FlowLabWorld, startDay: number, endDay: number) {
+  addProjectPhase(this, "combinedRanking", "WIP Limits + Swarming + Backlog Ranking", startDay, endDay, {
+    wipLimits: { Development: 5, Integration: 5, Test: 5 },
+    featureFocus: { startDay },
+    backlogRanking: true,
+  });
 });
 
 When("I load and simulate the project with seed {int}", function (this: FlowLabWorld, seed: number) {
@@ -2219,11 +2009,11 @@ Then("WIP limits remain active in the second phase", function (this: FlowLabWorl
   assert.deepEqual(resultFor(this).config.projectPhases?.[1].settings.wipLimits, { Development: 5, Integration: 5, Test: 5 });
 });
 
-Then("the oldest unfinished Feature becomes the finishing focus on day {int}", function (this: FlowLabWorld, day: number) {
+Then("the highest-ranked unfinished Feature becomes the priority focus on day {int}", function (this: FlowLabWorld, day: number) {
   assert.equal(resultFor(this).snapshots[day].featureFocus?.id, "FEATURE-001");
 });
 
-Then("later Features are not admitted while that Feature remains unfinished", function (this: FlowLabWorld) {
+Then("lower-ranked Features are not admitted while that Feature remains unfinished", function (this: FlowLabWorld) {
   const result = resultFor(this);
   assert.equal(result.events.filter((event) => event.day >= 51 && event.type === "entered-stage" && event.stage === "Development" && result.items.find((item) => item.id === event.itemId)?.featureId !== "FEATURE-001").length, 0);
 });
@@ -2641,7 +2431,7 @@ Then("Development, Integration, and Test respect their configured WIP limits", f
   }
 });
 
-Then("only the current finishing Feature is admitted from Backlog", function (this: FlowLabWorld) {
+Then("only the highest-ranked unfinished Feature is admitted from Backlog", function (this: FlowLabWorld) {
   const result = resultFor(this);
   for (const event of result.events.filter((candidate) => candidate.type === "entered-stage" && candidate.stage === "Development")) {
     const item = result.items.find((candidate) => candidate.id === event.itemId);
@@ -2649,15 +2439,15 @@ Then("only the current finishing Feature is admitted from Backlog", function (th
   }
 });
 
-Then("its lower-ranked Backlog work is selected before any other eligible work for that Feature", function (this: FlowLabWorld) {
+Then("highest-ranked eligible Backlog work is selected first", function (this: FlowLabWorld) {
   const rankings = resultFor(this).events
     .filter((event) => event.type === "entered-stage" && event.stage === "Development")
     .map((event) => resultFor(this).items.find((item) => item.id === event.itemId)?.ranking ?? Infinity);
   assert.ok(rankings.every((ranking, index) => index === 0 || ranking >= rankings[index - 1]));
 });
 
-Then("unused Development capacity may assist the focused Feature in Test", function (this: FlowLabWorld) {
-  assert.ok(resultFor(this).snapshots.some((snapshot) => snapshot.capacityAssistance?.some((assistance) => assistance.reason === "completion-focus" && assistance.from === "Development" && assistance.to === "Test")));
+Then("unused capacity is lent to the constrained stage handling highest-ranked active work", function (this: FlowLabWorld) {
+  assert.ok(resultFor(this).snapshots.some((snapshot) => snapshot.capacityAssistance?.some((assistance) => assistance.reason === "swarming" && assistance.featureId === "FEATURE-001")));
 });
 
 Given("a phase with WIP limits and Order backlog by ranking", function (this: FlowLabWorld) {
@@ -2713,7 +2503,7 @@ Then("Backlog remains ordered by ranking", function (this: FlowLabWorld) {
   assert.equal(configForProjectDay(resultFor(this).config, 20).config.backlogRanking, true);
 });
 
-Then("Swarming no longer restricts admission", function (this: FlowLabWorld) {
+Then("Swarming no longer lends spare capacity", function (this: FlowLabWorld) {
   assert.equal(configForProjectDay(resultFor(this).config, 20).config.featureFocus, undefined);
 });
 
@@ -2933,6 +2723,28 @@ Given("Development has a WIP limit of {int} and one free slot", function (this: 
   this.config = { ...this.config, wipLimits: { Development: limit, Integration: 5, Test: 5 } };
 });
 
+Given("a phase with backlog ranking deactivated", function (this: FlowLabWorld) {
+  const header = rankingBacklogConfig({ horizonDays: 1 });
+  this.config = {
+    ...header,
+    projectPhases: projectPhasesForPlan(header, [{
+      id: "ranking-off",
+      durationDays: 1,
+      interventions: noPhaseInterventions(),
+    }]),
+  };
+});
+
+When("I simulate one working day with backlog ranking deactivated", function (this: FlowLabWorld) {
+  assert.ok(this.config, "Expected a phase-based ranked backlog configuration");
+  this.result = runScenario(this.config, this.rankingSeed ?? 42);
+});
+
+Then("the phase does not consider Feature ranking for its admission", function (this: FlowLabWorld) {
+  assert.ok(this.config, "Expected a phase-based ranked backlog configuration");
+  assert.equal(configForProjectDay(this.config, 0).config.backlogRanking, false);
+});
+
 When("Development pulls an item with Order backlog by ranking active", function (this: FlowLabWorld) {
   assert.ok(this.config, "Expected a ranked backlog configuration");
   this.result = runScenario({ ...this.config, horizonDays: 1, batchDays: [] }, this.rankingSeed ?? 42);
@@ -3001,6 +2813,40 @@ Then("Feature {int} work remains in Development or downstream", function (this: 
 Then("the next eligible Backlog admission is from Feature {int}", function (this: FlowLabWorld, featureNumber: number) {
   assert.equal(featureNumber, 1);
   assert.equal(this.config?.projectPhases?.[1].settings.backlogRanking, true);
+});
+
+Given("the backlog-ranking intervention is active", function (this: FlowLabWorld) {
+  this.config = { ...scenarios.ranking };
+});
+
+Given("each Kanban column contains Feature work with rankings {int}, {int}, and {int}", function (this: FlowLabWorld, first: number, second: number, third: number) {
+  assert.equal(this.config?.backlogRanking, true);
+  this.kanbanColumnRankings = [[third, undefined, second, first]];
+});
+
+When("I order the Kanban columns by ranking", function (this: FlowLabWorld) {
+  const rankings = this.kanbanColumnRankings?.[0] ?? [];
+  this.kanbanColumnRankings = this.config?.workflow.stages.map((stage) => rankings
+    .map((ranking, index) => ({
+      item: {
+        id: `PBI-${index}`,
+        ranking,
+        positionId: index,
+        arrivedAt: 0,
+        enteredAt: { [stage]: 0 },
+      } as WorkItem,
+    }))
+    .sort((first, second) => compareCards(stage, true, first, second))
+    .map(({ item }) => item.ranking),
+  );
+});
+
+Then("each Kanban column lists rankings {int}, {int}, and {int} from top to bottom", function (this: FlowLabWorld, first: number, second: number, third: number) {
+  assert.ok(this.kanbanColumnRankings?.every((rankings) => rankings.slice(0, 3).join(",") === [first, second, third].join(",")));
+});
+
+Then("unranked Kanban items are listed after ranked Feature work", function (this: FlowLabWorld) {
+  assert.ok(this.kanbanColumnRankings?.every((rankings) => rankings.at(-1) === undefined));
 });
 
 Then("the saved project file retains the ranking-ordering phase", function (this: FlowLabWorld) {

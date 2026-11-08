@@ -8,11 +8,16 @@ Feature: Combine interventions within a phase
 
   The available composable policies are:
 
-  - WIP limits, using the configured limit for every applicable stage.
-  - Swarming, which focuses admission and unused
-    Development capacity on the oldest unfinished Feature.
-  - Order backlog by ranking, which admits lower numeric Feature rankings
-    first from Backlog.
+  - WIP limits, using the configured limit for every applicable stage and
+    leaving any surplus capacity idle.
+  - Swarming, which lends unused capacity to a constrained active stage
+    without changing work priority.
+  - Order backlog by ranking, which selects the lower numeric Feature ranking
+    first whenever eligible work is pushed or pulled.
+
+  When all three policies are enabled, the highest-ranked unfinished Feature
+  becomes the priority focus: its work is admitted first and spare capacity
+  supports its active bottleneck.
 
   A policy becomes active at the start of its phase and is removed at the
   start of the next phase unless that next phase also enables it. Existing
@@ -34,9 +39,9 @@ Feature: Combine interventions within a phase
     And the Backlog contains ranked work for more than one unfinished Feature
     When I simulate the phase
     Then Development, Integration, and Test respect their configured WIP limits
-    And only the current finishing Feature is admitted from Backlog
-    And its lower-ranked Backlog work is selected before any other eligible work for that Feature
-    And unused Development capacity may assist the focused Feature in Test
+    And only the highest-ranked unfinished Feature is admitted from Backlog
+    And highest-ranked eligible Backlog work is selected first
+    And unused capacity is lent to the constrained stage handling highest-ranked active work
 
   Scenario: Use ranking with WIP limits without Swarming
     Given a phase with WIP limits and Order backlog by ranking
@@ -51,7 +56,7 @@ Feature: Combine interventions within a phase
     When day 20 begins
     Then WIP limits remain active
     And Backlog remains ordered by ranking
-    And Swarming no longer restricts admission
+    And Swarming no longer lends spare capacity
     And work already present in the workflow remains in its simulated stage
 
   Scenario: Re-edit a mixed phase without losing its other policies

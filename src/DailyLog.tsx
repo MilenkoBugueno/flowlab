@@ -36,8 +36,8 @@ export function DailyLog({ entries, snapshots, stages, seed }: Props) {
               <th scope="col">Day</th>
               {routes.map((route) => <th key={`${route.from}-${route.to}`} scope="col">{route.from} → {route.to}</th>)}
               <th scope="col">Project phase</th>
-              <th scope="col">Swarming focus</th>
-              <th scope="col">Focus swarm</th>
+              <th scope="col">Priority focus</th>
+              <th scope="col">Swarming assistance</th>
               <th scope="col">Task-switch loss</th>
             </tr>
           </thead>
@@ -48,7 +48,7 @@ export function DailyLog({ entries, snapshots, stages, seed }: Props) {
                 {routes.map((route) => <td key={`${route.from}-${route.to}`}>{movementCount(entry, route)}</td>)}
                 <td>{entry.projectPhase?.label ?? "—"}</td>
                 <td>{entry.featureFocus?.title ?? "—"}</td>
-                <td>{(snapshots[entry.day]?.capacityAssistance ?? []).filter((assistance) => assistance.reason === "completion-focus").map((assistance) => `${assistance.from} → ${assistance.to}: ${assistance.capacity.toFixed(2)}`).join(", ") || "—"}</td>
+                <td>{(snapshots[entry.day]?.capacityAssistance ?? []).map((assistance) => `${assistance.from} → ${assistance.to}: ${assistance.capacity.toFixed(2)}`).join(", ") || "—"}</td>
                 <td>{(snapshots[entry.day]?.operatingCapacity ?? []).reduce((total, capacity) => total + capacity.taskSwitchingLoss, 0).toFixed(2)}</td>
               </tr>
             ))}

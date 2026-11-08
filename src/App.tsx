@@ -370,7 +370,7 @@ export default function App() {
       setSwarmDraft(undefined);
       setInterventionError(undefined);
     } catch (error) {
-      setInterventionError(error instanceof Error ? error.message : "Unable to save swarm settings.");
+      setInterventionError(error instanceof Error ? error.message : "Unable to save scheduled capacity transfer settings.");
     }
   };
 
@@ -442,6 +442,7 @@ export default function App() {
             <div className="phase-plan-editor" aria-labelledby="phase-plan-heading">
               <h3 id="phase-plan-heading">Phase plan</h3>
               <p>Each duration is in working days. The plan determines when the simulation stops.</p>
+              <small>WIP limits cap admission. Swarming shares unused capacity with a bottleneck. Backlog ranking selects the highest-ranked eligible work first.</small>
               {phasePlan.map((phase, index) => {
                 const startDay = phasePlan.slice(0, index).reduce((total, entry) => total + entry.durationDays, 0);
                 const endDay = startDay + phase.durationDays - 1;
@@ -500,7 +501,7 @@ export default function App() {
           <section className="panel-section capacity-launcher" aria-labelledby="capacity-launcher-heading">
             <p className="eyebrow">Global model</p>
             <h2 id="capacity-launcher-heading">Capacity & concurrency</h2>
-            <p>Set global rates, WIP limits, and operating concurrency without adding detail to the phase plan.</p>
+            <p>Set global rates, WIP limits, Swarming effectiveness, and operating concurrency without adding detail to the phase plan.</p>
             <button type="button" onClick={() => setCapacityModalOpen(true)}>Configure capacity & concurrency</button>
           </section>
 
@@ -522,7 +523,7 @@ export default function App() {
             <summary>Interventions</summary>
             <section className="intervention-editor" aria-labelledby="completion-focus-heading">
               <h2 id="completion-focus-heading">Swarming</h2>
-              <p>Finish the oldest incomplete Feature before admitting another one. Unused Development capacity helps Test for that Feature.</p>
+              <p>Unused capacity can support work at a constrained stage. Swarming does not change work priority; priority focus applies only when a phase combines WIP limits, Swarming, and Backlog ranking.</p>
               <label className="completion-focus-toggle"><span>Enable swarming</span><input type="checkbox" checked={featureFocusEnabled} onChange={(event) => setFeatureFocusEnabled(event.target.checked)} /></label>
               <label>Start day<input type="number" min="0" step="1" disabled={!featureFocusEnabled} value={featureFocusStartDay} onChange={(event) => setFeatureFocusStartDay(event.target.value)} /></label>
               <button type="button" onClick={saveFeatureFocus}>Save swarming</button>
@@ -543,8 +544,9 @@ export default function App() {
               <button type="button" onClick={saveIncident}>Save incident</button>
             </section>
 
-            <section className="intervention-editor" aria-labelledby="swarm-heading">
-              <h2 id="swarm-heading">Swarm</h2>
+            <section className="intervention-editor" aria-labelledby="scheduled-capacity-transfer-heading">
+              <h2 id="scheduled-capacity-transfer-heading">Scheduled capacity transfer</h2>
+              <p>Move a fixed amount of capacity between selected stages for a fixed period. This is separate from automatic Swarming.</p>
               <div className="compact-fields">
                 <label>From
                   <select value={swarmForm.sourceStage} onChange={(event) => setSwarmDraft({ ...swarmForm, sourceStage: event.target.value })}>
@@ -563,7 +565,7 @@ export default function App() {
               </div>
               <label>Capacity shift<input type="number" min="0.01" step="0.05" value={swarmForm.capacityShift} onChange={(event) => setSwarmDraft({ ...swarmForm, capacityShift: Number(event.target.value) })} /></label>
               <label>First-day effectiveness<input type="number" min="0" max="1" step="0.05" value={swarmForm.rampUpEffectiveness} onChange={(event) => setSwarmDraft({ ...swarmForm, rampUpEffectiveness: Number(event.target.value) })} /></label>
-              <button type="button" onClick={saveSwarm}>Save swarm</button>
+              <button type="button" onClick={saveSwarm}>Save scheduled transfer</button>
             </section>
             {interventionError && <p className="settings-error" role="alert">{interventionError}</p>}
           </details>
@@ -571,7 +573,8 @@ export default function App() {
           <details className="model-notes">
             <summary>Model notes</summary>
             <p>Without a Development WIP limit, the daily push rate releases Backlog work into Development. A Development WIP limit changes that admission to pull.</p>
-            <p>Swarming reassigns Development capacity. WIP limits keep constrained work visibly upstream.</p>
+            <p>WIP limits never transfer capacity, so unused capacity stays idle unless Swarming is active. Swarming reassigns unused capacity to a bottleneck.</p>
+            <p>Backlog ranking selects the highest-ranked eligible work for every push or pull. WIP limits, Swarming, and Backlog ranking together activate priority focus: WIP stays bounded, bottlenecks are supported, and capacity concentrates on the highest-ranked Feature.</p>
             <p>Integration holds finished Development work until Test accepts it; it never receives capacity or concurrency settings.</p>
             <p>Compare cycle time, completions, and queue-days—not just the shape of the CFD.</p>
           </details>
@@ -638,14 +641,14 @@ export default function App() {
             </div>
             <button type="button" className="modal-close" aria-label="Close capacity settings" onClick={closeCapacityModal}>×</button>
           </header>
-          <p className="capacity-modal-intro">These settings apply across the simulation. Phase-plan entries only choose which flow policies are active.</p>
+          <p className="capacity-modal-intro">These settings apply across the simulation. Phase-plan entries choose when WIP limits, Swarming, and Backlog ranking are active.</p>
           <div className="capacity-modal-global">
             <label className="arrival-rate-field" htmlFor="arrival-rate">
               <span>Average backlog pushes / day</span>
               <input id="arrival-rate" type="number" min="0" step="0.1" value={arrivalRateInput} onChange={(event) => setArrivalRateInput(event.target.value)} />
             </label>
             <label className="arrival-rate-field" htmlFor="wip-assistance-effectiveness">
-              <span>WIP assistance effectiveness</span>
+              <span>Swarming effectiveness <small>(only when Swarming is enabled)</small></span>
               <input id="wip-assistance-effectiveness" type="number" min="0" max="1" step="0.05" value={wipAssistanceInput} onChange={(event) => setWipAssistanceInput(event.target.value)} />
             </label>
           </div>
@@ -669,7 +672,7 @@ export default function App() {
           </section>
           <section className="capacity-modal-section" aria-labelledby="wip-limit-heading">
             <h3 id="wip-limit-heading">WIP limits</h3>
-            <p>These limits are used whenever a phase enables WIP limits. Integration is a passive handoff stage, but can still have a WIP limit.</p>
+            <p>These limits apply whenever a phase enables WIP limits. A full limit blocks admission; unused capacity stays idle unless that phase also enables Swarming. Integration is a passive handoff stage, but can still have a WIP limit.</p>
             <div className="wip-limit-list">
               {wipLimitStages.map((stage) => <label key={stage}>{stage}<input type="number" min="0" step="1" value={wipLimitDraft[stage] ?? String(selectedConfig.wipLimits?.[stage] ?? 5)} onChange={(event) => setWipLimitDraft((draft) => ({ ...draft, [stage]: event.target.value }))} /></label>)}
             </div>

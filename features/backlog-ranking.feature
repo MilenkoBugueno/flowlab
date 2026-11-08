@@ -5,10 +5,10 @@ Feature: Rank Feature-backed backlog work
   1, Feature 002 has ranking 2, and so on. Ranking 1 is highest. Every PBI and
   feedback Bug linked to a Feature inherits that Feature's ranking.
 
-  While this intervention is active, Backlog is ordered by ascending ranking.
-  A higher-ranked item is always admitted to Development before a lower-ranked
-  item, whether Development uses rate-based push or WIP-limited
-  pull. Work that has already left Backlog is not moved or reordered.
+  While this intervention is active, every eligible push or pull chooses the
+  lowest numeric ranking first: admissions from Backlog, handoffs, and stage
+  activation all use the same priority. The Kanban board also presents ranked
+  items first in every column, without moving the work between workflow states.
 
   Scenario: Assign a stable ranking to every seeded Feature and its PBIs
     Given an initial backlog with 3 Features
@@ -34,18 +34,32 @@ Feature: Rank Feature-backed backlog work
     Then a PBI from Feature 001 enters Development
     And lower-ranked Feature work remains in Backlog
 
+  Scenario: Ignore Feature ranking when a phase deactivates backlog ranking
+    Given a phase with backlog ranking deactivated
+    And Feature 002 is ahead of Feature 001 in the random backlog position order
+    When I simulate one working day with backlog ranking deactivated
+    Then a PBI from Feature 002 enters Development
+    And the phase does not consider Feature ranking for its admission
+
   Scenario: Give feedback Bugs the ranking of their originating Feature
     Given Feature 002 has generated a feedback Bug
     When the Bug enters Backlog
     Then the Bug has ranking 2
     And the Bug is admitted before Backlog items with a ranking greater than 2
 
-  Scenario: Reorder only Backlog work when the intervention begins mid-simulation
+  Scenario: Do not move in-flight work when ranking begins mid-simulation
     Given a simulation where Feature 003 work is already in Development
     And ranked Feature 001 and Feature 002 work remain in Backlog
     When Order backlog by ranking begins on day 20
     Then Feature 003 work remains in Development or downstream
     And the next eligible Backlog admission is from Feature 001
+
+  Scenario: Show ranked work first in every Kanban column
+    Given the backlog-ranking intervention is active
+    And each Kanban column contains Feature work with rankings 1, 2, and 3
+    When I order the Kanban columns by ranking
+    Then each Kanban column lists rankings 1, 2, and 3 from top to bottom
+    And unranked Kanban items are listed after ranked Feature work
 
   Scenario: Choose ranking order in a phase plan
     Given I am editing the phase plan

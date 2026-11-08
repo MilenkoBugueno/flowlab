@@ -54,10 +54,11 @@ export function phaseSettingsFor(config: ScenarioConfig): PhaseSettings {
 }
 
 export function phaseInterventionsForScenario(scenarioId: ScenarioId | undefined): PhaseInterventions {
+  const includesWipAndSwarming = scenarioId === "combined" || scenarioId === "combinedRanking";
   return {
-    wipLimits: scenarioId === "wip" || scenarioId === "combined",
-    featureFocus: scenarioId === "swarm" || scenarioId === "combined",
-    backlogRanking: scenarioId === "ranking",
+    wipLimits: scenarioId === "wip" || includesWipAndSwarming,
+    featureFocus: scenarioId === "swarm" || includesWipAndSwarming,
+    backlogRanking: scenarioId === "ranking" || scenarioId === "combinedRanking",
   };
 }
 

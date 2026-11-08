@@ -34,14 +34,14 @@ Feature: Project files with time-phased simulation settings
     Then stage WIP limits no longer restrict admissions from day 51
     And all existing work remains in its simulated stage with its existing progress
 
-  Scenario: Combine a time-phased WIP policy with finishing focus
+  Scenario: Combine time-phased WIP limits, Swarming, and Backlog ranking
     Given a project file with feature-backed initial work
     And a WIP Limits phase from day 0 through day 50
-    And a WIP Limits plus Swarming phase from day 51 through day 120
+    And a WIP Limits plus Swarming plus Backlog Ranking phase from day 51 through day 120
     When I load and simulate the project with seed 42
     Then WIP limits remain active in the second phase
-    And the oldest unfinished Feature becomes the finishing focus on day 51
-    And later Features are not admitted while that Feature remains unfinished
+    And the highest-ranked unfinished Feature becomes the priority focus on day 51
+    And lower-ranked Features are not admitted while that Feature remains unfinished
 
   Scenario: Persist resolved settings instead of only the currently displayed controls
     Given I have configured a simulation with a custom workflow, rates, initial Features, and time-phased settings

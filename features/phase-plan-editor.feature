@@ -17,7 +17,7 @@ Feature: Configure a multi-phase intervention plan in the GUI
     And the phase plan shows WIP Limits on days 20 through 49
     And the simulation horizon is 50 working days
 
-  Scenario: Extend an existing plan with finishing focus
+  Scenario: Extend an existing plan with Swarming
     Given a phase plan with Baseline for 20 working days and WIP Limits for 30 working days
     When I add a Swarming phase lasting 20 working days
     Then the new phase starts on day 50 and ends on day 69

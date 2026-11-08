@@ -73,14 +73,14 @@ export function validateFeatureBacklog(config: FeatureBacklogConfig): FeatureBac
 
 export function validateFeatureFocus(config: ScenarioConfig, policy: FeatureFocusPolicy): FeatureFocusPolicy {
   if (!Number.isInteger(policy.startDay) || policy.startDay < 0 || policy.startDay >= config.horizonDays) {
-    throw new Error("The completion-focus start day must be within the simulation horizon.");
+    throw new Error("The Swarming start day must be within the simulation horizon.");
   }
   return policy;
 }
 
 export function validateWipAssistanceEffectiveness(effectiveness: number): number {
   if (!Number.isFinite(effectiveness) || effectiveness < 0 || effectiveness > 1) {
-    throw new Error("WIP assistance effectiveness must be between zero and one.");
+    throw new Error("Swarming effectiveness must be between zero and one.");
   }
   return effectiveness;
 }
@@ -135,16 +135,16 @@ export function validateSwarm(config: ScenarioConfig, swarm: SwarmPolicy): Swarm
   const active = activeStages(config.workflow);
   assertActiveStage(swarm.sourceStage, active, "The swarm source stage");
   assertActiveStage(swarm.targetStage, active, "The swarm target stage");
-  if (swarm.sourceStage === swarm.targetStage) throw new Error("A swarm needs different source and target stages.");
+  if (swarm.sourceStage === swarm.targetStage) throw new Error("A scheduled capacity transfer needs different source and target stages.");
   if (!Number.isInteger(swarm.startDay) || swarm.startDay < 0 || !Number.isInteger(swarm.durationDays) || swarm.durationDays <= 0 || swarm.startDay + swarm.durationDays > config.horizonDays) {
-    throw new Error("Swarm timing must fit within the simulation horizon.");
+    throw new Error("Scheduled capacity transfer timing must fit within the simulation horizon.");
   }
-  assertPositiveRate(swarm.capacityShift, "The swarm capacity shift");
+  assertPositiveRate(swarm.capacityShift, "The scheduled capacity transfer shift");
   if (swarm.capacityShift > (config.baseRates[swarm.sourceStage] ?? 1)) {
-    throw new Error("The swarm capacity shift cannot exceed the source stage's daily processing rate.");
+    throw new Error("The scheduled capacity transfer shift cannot exceed the source stage's daily processing rate.");
   }
   if (!Number.isFinite(swarm.rampUpEffectiveness) || swarm.rampUpEffectiveness < 0 || swarm.rampUpEffectiveness > 1) {
-    throw new Error("First-day swarm effectiveness must be between zero and one.");
+    throw new Error("First-day scheduled capacity transfer effectiveness must be between zero and one.");
   }
   return swarm;
 }

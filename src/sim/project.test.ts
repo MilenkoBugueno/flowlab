@@ -82,6 +82,21 @@ describe("project files", () => {
     expect(phases[0].settings.backlogRanking).toBe(true);
   });
 
+  it("adds all three flow policies to the priority-focus phase profile", () => {
+    const phases = projectPhasesForPlan({ ...scenarios.baseline, horizonDays: 20 }, [
+      { id: "combined-ranking", scenarioId: "combinedRanking", durationDays: 20 },
+    ]);
+
+    expect(phases[0]).toMatchObject({
+      label: "WIP Limits + Swarming + Backlog Ranking",
+      settings: {
+        wipLimits: { Development: 5, Integration: 5, Test: 5 },
+        featureFocus: { startDay: 0 },
+        backlogRanking: true,
+      },
+    });
+  });
+
   it("does not leak global WIP limits into a phase where the policy is off", () => {
     const header = {
       ...scenarios.baseline,

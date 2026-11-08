@@ -41,8 +41,8 @@ interface Props {
   onSelectDay: (day: number) => void;
 }
 
-function compareCards(stage: Stage, rankBacklog: boolean, first: { item: WorkItem }, second: { item: WorkItem }): number {
-  if (rankBacklog) {
+export function compareCards(stage: Stage, rankByFeature: boolean, first: { item: WorkItem }, second: { item: WorkItem }): number {
+  if (rankByFeature) {
     const firstRanking = first.item.ranking ?? Number.MAX_SAFE_INTEGER;
     const secondRanking = second.item.ranking ?? Number.MAX_SAFE_INTEGER;
     return firstRanking - secondRanking
@@ -144,7 +144,7 @@ export function KanbanBoard({ result, selectedDay, onSelectDay }: Props) {
       </section>
       <div className="kanban-columns">
         {stages.map((stage) => {
-          const cards = (cardsByStage.get(stage) ?? []).sort((first, second) => compareCards(stage, rankBacklog && stage === stages[0], first, second));
+          const cards = (cardsByStage.get(stage) ?? []).sort((first, second) => compareCards(stage, rankBacklog, first, second));
           return (
             <section className="kanban-column" key={stage} aria-label={`${stage}: ${cards.length} items`}>
               <h3>{stage}<small>{cards.length}</small></h3>

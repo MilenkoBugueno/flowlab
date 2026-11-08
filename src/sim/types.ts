@@ -2,7 +2,7 @@ export type Stage = string;
 export type ActiveStage = string;
 export type ItemStatus = "waiting" | "active" | "blocked" | "done";
 export type WorkItemType = "PBI" | "Bug";
-export type ScenarioId = "baseline" | "swarm" | "wip" | "combined" | "ranking";
+export type ScenarioId = "baseline" | "swarm" | "wip" | "combined" | "ranking" | "combinedRanking";
 
 export interface WorkflowConfig {
   stages: Stage[];
@@ -48,7 +48,10 @@ export interface FeatureBacklogConfig {
 }
 
 export interface FeatureFocusPolicy {
-  /** First simulated day on which the completion focus is applied. */
+  /**
+   * First simulated day on which Swarming may borrow spare capacity.
+   * A priority focus is active only when WIP limits and Backlog ranking are also enabled.
+   */
   startDay: number;
 }
 
@@ -104,8 +107,9 @@ export interface ScenarioConfig {
   serviceEffort: Partial<Record<ActiveStage, { min: number; max: number }>>;
   operatingAssumptions?: Partial<Record<ActiveStage, OperatingAssumptions>>;
   wipLimits?: Partial<Record<Stage, number>>;
-  /** Order Backlog admissions by Feature ranking while this policy is active. */
+  /** Select the highest-ranked eligible Feature work first for every push or pull while active. */
   backlogRanking?: boolean;
+  /** Legacy serialized name; controls the effectiveness of Swarming assistance. */
   wipAssistanceEffectiveness?: number;
   incident?: CapacityIncident;
   swarm?: SwarmPolicy;
@@ -180,7 +184,7 @@ export interface CapacityAssistance {
   to: ActiveStage;
   capacity: number;
   effectiveness: number;
-  reason?: "wip-assistance" | "completion-focus";
+  reason?: "wip-assistance" | "completion-focus" | "swarming";
   featureId?: string;
 }
 

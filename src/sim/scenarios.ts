@@ -35,21 +35,21 @@ export const scenarios: Record<ScenarioId, ScenarioConfig> = {
   swarm: {
     id: "swarm",
     label: "Swarming",
-    summary: "Finish the oldest incomplete Feature before admitting another, using unused Development capacity to help Test.",
+    summary: "Unused capacity can be borrowed across stages to support active work at a bottleneck.",
     ...common,
     featureFocus: { startDay: 0 },
   },
   wip: {
     id: "wip",
     label: "WIP Limits",
-    summary: "Pull limits cap Development and Test work; constrained work remains visible upstream.",
+    summary: "Pull limits cap work in progress; unused capacity stays idle unless Swarming is active.",
     ...common,
     wipLimits: { Development: 5, Integration: 5, Test: 5 },
   },
   combined: {
     id: "combined",
     label: "WIP Limits + Swarming",
-    summary: "Stage WIP limits stabilize pull flow while Swarming completes one Feature before starting the next.",
+    summary: "WIP limits keep work bounded while Swarming lends spare capacity to a bottleneck.",
     ...common,
     wipLimits: { Development: 5, Integration: 5, Test: 5 },
     featureFocus: { startDay: 0 },
@@ -57,8 +57,17 @@ export const scenarios: Record<ScenarioId, ScenarioConfig> = {
   ranking: {
     id: "ranking",
     label: "Order backlog by ranking",
-    summary: "Feature 001 ranks first, so its PBIs and feedback Bugs are admitted from Backlog before lower-ranked Feature work.",
+    summary: "The highest-ranked eligible Feature work, including feedback Bugs, is selected first for every push or pull.",
     ...common,
+    backlogRanking: true,
+  },
+  combinedRanking: {
+    id: "combinedRanking",
+    label: "WIP Limits + Swarming + Backlog Ranking",
+    summary: "WIP limits bound work in progress, Swarming supports bottlenecks with spare capacity, and Backlog ranking keeps the highest-ranked Feature moving first.",
+    ...common,
+    wipLimits: { Development: 5, Integration: 5, Test: 5 },
+    featureFocus: { startDay: 0 },
     backlogRanking: true,
   },
 };

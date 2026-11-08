@@ -2,7 +2,7 @@ Feature: Custom simulation capacity and intervention settings
 
   FlowLab lets a reader tune the operating assumptions for the workflow they
   are modeling. Daily processing rates belong to active workflow stages, while
-  incidents and swarms are explicit, editable interventions.
+  incidents and scheduled capacity transfers are explicit, editable interventions.
 
   Scenario: Configure the average backlog push rate
     Given I am editing the backlog push rate
@@ -43,17 +43,17 @@ Feature: Custom simulation capacity and intervention settings
     Then the simulation applies the configured incident only to Test on days 24 through 36
     And Test uses a daily processing rate of 0.4 while the incident is active
 
-  Scenario: Configure a swarm intervention
+  Scenario: Configure a scheduled capacity transfer
     Given I am editing the intervention controls
-    When I set a swarm from Development to Test starting on day 45 for 10 days
-    And I set the swarm capacity shift to 0.5 and the first-day effectiveness to 0.75
+    When I set a scheduled capacity transfer from Development to Test starting on day 45 for 10 days
+    And I set the transfer capacity shift to 0.5 and the first-day effectiveness to 0.75
     And I run the simulation with seed 42
     Then the simulation temporarily shifts 0.5 daily capacity from Development to Test
-    And Test receives 0.375 daily capacity from the swarm on its first day
-    And the swarm stops after 10 days
+    And Test receives 0.375 daily capacity from the scheduled transfer on its first day
+    And the scheduled transfer stops after 10 days
 
-  Scenario: Reject an invalid swarm configuration
+  Scenario: Reject an invalid scheduled capacity transfer
     Given I am editing the intervention controls
-    When I save a swarm that starts and ends in the same stage
-    Then I am told that a swarm needs different source and target stages
+    When I save a scheduled capacity transfer that starts and ends in the same stage
+    Then I am told that a scheduled capacity transfer needs different source and target stages
     And the current intervention settings remain unchanged
