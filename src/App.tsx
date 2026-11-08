@@ -25,7 +25,7 @@ const defaultFeatureBacklog: FeatureBacklogConfig = {
   minPbisPerFeature: 5,
   maxPbisPerFeature: 10,
   baseBugEffort: 1,
-  feedbackDelayEffortFactor: 0.1,
+  feedbackDelayEffortFactor: 0.2,
 };
 
 function formatMetric(key: keyof Metrics, value: Metrics[keyof Metrics]) {
@@ -40,8 +40,8 @@ function inventoryForStages(inventory: InitialInventory, stages: string[]): Init
 
 export default function App() {
   const [seedInput, setSeedInput] = useState("42");
-  const [arrivalRateInput, setArrivalRateInput] = useState(String(scenarios.baseline.arrivalRatePerDay));
-  const [savedArrivalRate, setSavedArrivalRate] = useState(scenarios.baseline.arrivalRatePerDay);
+  const [arrivalRateInput, setArrivalRateInput] = useState("5");
+  const [savedArrivalRate, setSavedArrivalRate] = useState(5);
   const [wipAssistanceInput, setWipAssistanceInput] = useState(String(scenarios.baseline.wipAssistanceEffectiveness ?? 0.75));
   const [savedWipAssistanceEffectiveness, setSavedWipAssistanceEffectiveness] = useState(scenarios.baseline.wipAssistanceEffectiveness ?? 0.75);
   const [arrivalRateError, setArrivalRateError] = useState<string>();
@@ -60,18 +60,26 @@ export default function App() {
   const [workflowInput, setWorkflowInput] = useState(scenarios.baseline.workflow.stages.join(", "));
   const [workflow, setWorkflow] = useState(scenarios.baseline.workflow.stages);
   const [workflowError, setWorkflowError] = useState<string>();
-  const [savedRates, setSavedRates] = useState<Record<string, number>>({});
+  const [savedRates, setSavedRates] = useState<Record<string, number>>({ Development: 4, Test: 2 });
   const [rateDraft, setRateDraft] = useState<Record<string, string>>({});
   const [savedOperatingAssumptions, setSavedOperatingAssumptions] = useState<Partial<Record<string, OperatingAssumptions>>>({});
   const [operatingDraft, setOperatingDraft] = useState<Partial<Record<string, OperatingAssumptions>>>({});
+  const [savedWipLimits, setSavedWipLimits] = useState<Partial<Record<string, number>> | undefined>({ Development: 5, Integration: 5, Test: 5 });
+  const [wipLimitDraft, setWipLimitDraft] = useState<Record<string, string>>({});
   const [capacityError, setCapacityError] = useState<string>();
+  const [capacityModalOpen, setCapacityModalOpen] = useState(false);
   const [savedIncident, setSavedIncident] = useState<CapacityIncident>();
   const [savedSwarm, setSavedSwarm] = useState<SwarmPolicy>();
   const [incidentDraft, setIncidentDraft] = useState<CapacityIncident>();
   const [swarmDraft, setSwarmDraft] = useState<SwarmPolicy>();
   const [interventionError, setInterventionError] = useState<string>();
   const [projectName, setProjectName] = useState("FlowLab project");
-  const [phasePlan, setPhasePlan] = useState<PhasePlanEntry[]>([{ id: "phase-1", interventions: noPhaseInterventions(), durationDays: scenarios.baseline.horizonDays }]);
+  const [phasePlan, setPhasePlan] = useState<PhasePlanEntry[]>([
+    { id: "phase-1", interventions: noPhaseInterventions(), durationDays: 20 },
+    { id: "phase-2", interventions: noPhaseInterventions(), durationDays: 20 },
+    { id: "phase-3", interventions: noPhaseInterventions(), durationDays: 20 },
+    { id: "phase-4", interventions: noPhaseInterventions(), durationDays: 20 },
+  ]);
   const [phasePlanError, setPhasePlanError] = useState<string>();
   const [projectHeaderOverrides, setProjectHeaderOverrides] = useState<Partial<ScenarioConfig>>({});
   const [projectFileError, setProjectFileError] = useState<string>();
@@ -83,8 +91,8 @@ export default function App() {
   );
   const workflowConfig = useMemo(() => withWorkflow(projectBaseConfig, workflow), [projectBaseConfig, workflow]);
   const customizedConfig = useMemo(
-    () => withSimulationSettings(workflowConfig, { arrivalRatePerDay: savedArrivalRate, initialInventory: inventoryForStages(savedInitialInventory, workflowConfig.workflow.stages), featureBacklog: savedFeatureBacklog, featureFocus: savedFeatureFocus, wipAssistanceEffectiveness: savedWipAssistanceEffectiveness, baseRates: savedRates, operatingAssumptions: savedOperatingAssumptions, incident: savedIncident, swarm: savedSwarm }),
-    [workflowConfig, savedArrivalRate, savedInitialInventory, savedFeatureBacklog, savedFeatureFocus, savedWipAssistanceEffectiveness, savedRates, savedOperatingAssumptions, savedIncident, savedSwarm],
+    () => withSimulationSettings(workflowConfig, { arrivalRatePerDay: savedArrivalRate, initialInventory: inventoryForStages(savedInitialInventory, workflowConfig.workflow.stages), featureBacklog: savedFeatureBacklog, featureFocus: savedFeatureFocus, wipAssistanceEffectiveness: savedWipAssistanceEffectiveness, baseRates: savedRates, operatingAssumptions: savedOperatingAssumptions, wipLimits: savedWipLimits, incident: savedIncident, swarm: savedSwarm }),
+    [workflowConfig, savedArrivalRate, savedInitialInventory, savedFeatureBacklog, savedFeatureFocus, savedWipAssistanceEffectiveness, savedRates, savedOperatingAssumptions, savedWipLimits, savedIncident, savedSwarm],
   );
   const phasePlanHorizon = phasePlan.reduce((total, phase) => total + phase.durationDays, 0);
   const projectPhases = useMemo(
@@ -118,6 +126,7 @@ export default function App() {
     return !interventions.wipLimits && !interventions.featureFocus && !interventions.backlogRanking;
   });
   const activeWorkflowStages = activeStages(workflowConfig.workflow);
+  const wipLimitStages = workflowConfig.workflow.stages.slice(1, -1);
   const fallbackIncident: CapacityIncident = {
     stage: activeWorkflowStages[0] ?? "",
     startDay: 30,
@@ -164,7 +173,6 @@ export default function App() {
         batchDays: config.batchDays,
         batchSize: config.batchSize,
         serviceEffort: config.serviceEffort,
-        wipLimits: config.wipLimits,
       });
       setSavedArrivalRate(config.arrivalRatePerDay);
       setArrivalRateInput(String(config.arrivalRatePerDay));
@@ -177,6 +185,8 @@ export default function App() {
       setRateDraft({});
       setSavedOperatingAssumptions(config.operatingAssumptions ?? {});
       setOperatingDraft({});
+      setSavedWipLimits(config.wipLimits);
+      setWipLimitDraft({});
       setSavedIncident(config.incident);
       setSavedSwarm(config.swarm);
       setSavedFeatureFocus(config.featureFocus ?? null);
@@ -259,11 +269,16 @@ export default function App() {
     try {
       const nextWorkflow = workflowInput.split(",");
       withWorkflow(projectBaseConfig, nextWorkflow);
-      setWorkflow(nextWorkflow.map((stage) => stage.trim()));
+      const normalizedWorkflow = nextWorkflow.map((stage) => stage.trim());
+      setWorkflow(normalizedWorkflow);
       setSavedRates({});
       setRateDraft({});
       setSavedOperatingAssumptions({});
       setOperatingDraft({});
+      setSavedWipLimits((limits) => limits && Object.fromEntries(
+        normalizedWorkflow.slice(1, -1).flatMap((stage) => limits[stage] === undefined ? [] : [[stage, limits[stage]]]),
+      ));
+      setWipLimitDraft({});
       setSavedIncident(undefined);
       setSavedSwarm(undefined);
       setIncidentDraft(undefined);
@@ -287,15 +302,23 @@ export default function App() {
         stage,
         operatingDraft[stage] ?? selectedConfig.operatingAssumptions?.[stage] ?? { focusWip: 5, maximumConcurrency: 16, taskSwitchingLossRatio: 0.2 },
       ]));
-      withSimulationSettings(workflowConfig, { arrivalRatePerDay: arrivalRate, wipAssistanceEffectiveness, baseRates: rates, operatingAssumptions, incident: savedIncident, swarm: savedSwarm });
+      const wipLimits = Object.fromEntries(wipLimitStages.map((stage) => [
+        stage,
+        Number(wipLimitDraft[stage] ?? selectedConfig.wipLimits?.[stage] ?? 5),
+      ]));
+      withSimulationSettings(workflowConfig, { arrivalRatePerDay: arrivalRate, wipAssistanceEffectiveness, baseRates: rates, operatingAssumptions, wipLimits, incident: savedIncident, swarm: savedSwarm });
       setSavedArrivalRate(arrivalRate);
       setSavedWipAssistanceEffectiveness(wipAssistanceEffectiveness);
       setSavedRates(rates);
       setRateDraft({});
       setSavedOperatingAssumptions(operatingAssumptions);
       setOperatingDraft({});
+      setSavedWipLimits(wipLimits);
+      setWipLimitDraft({});
+      setPhasePlan((plan) => plan.map((phase) => ({ ...phase, settings: undefined })));
       setCapacityError(undefined);
       setArrivalRateError(undefined);
+      setCapacityModalOpen(false);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unable to save capacity allocation.";
       if (message.includes("backlog push rate")) {
@@ -354,6 +377,17 @@ export default function App() {
   const updateOperatingAssumption = (stage: string, field: keyof OperatingAssumptions, value: string) => {
     const current = operatingDraft[stage] ?? selectedConfig.operatingAssumptions?.[stage] ?? { focusWip: 5, maximumConcurrency: 16, taskSwitchingLossRatio: 0.2 };
     setOperatingDraft((draft) => ({ ...draft, [stage]: { ...current, [field]: Number(value) } }));
+  };
+
+  const closeCapacityModal = () => {
+    setCapacityModalOpen(false);
+    setArrivalRateInput(String(savedArrivalRate));
+    setWipAssistanceInput(String(savedWipAssistanceEffectiveness));
+    setRateDraft({});
+    setOperatingDraft({});
+    setWipLimitDraft({});
+    setCapacityError(undefined);
+    setArrivalRateError(undefined);
   };
 
   const runSimulation = () => {
@@ -463,35 +497,12 @@ export default function App() {
             {workflowError && <p className="workflow-error" role="alert">{workflowError}</p>}
           </section>
 
-          <details className="settings-panel" open>
-            <summary>Capacity & concurrency</summary>
-            <p>Set the rate at which Backlog is pushed into Development, each stage's processing rate, and its operating concurrency.</p>
-            <label className="arrival-rate-field" htmlFor="arrival-rate">
-              <span>Average backlog pushes / day</span>
-              <input id="arrival-rate" type="number" min="0" step="0.1" value={arrivalRateInput} onChange={(event) => setArrivalRateInput(event.target.value)} />
-            </label>
-            <label className="arrival-rate-field" htmlFor="wip-assistance-effectiveness">
-              <span>WIP assistance effectiveness</span>
-              <input id="wip-assistance-effectiveness" type="number" min="0" max="1" step="0.05" value={wipAssistanceInput} onChange={(event) => setWipAssistanceInput(event.target.value)} />
-            </label>
-            <div className="stage-allocation-list">
-              {activeWorkflowStages.map((stage) => {
-                const assumptions = operatingDraft[stage] ?? selectedConfig.operatingAssumptions?.[stage] ?? { focusWip: 5, maximumConcurrency: 16, taskSwitchingLossRatio: 0.2 };
-                return (
-                  <fieldset key={stage}>
-                    <legend>{stage}</legend>
-                    <label htmlFor={`rate-${stage}`}>Daily processing rate<input id={`rate-${stage}`} type="number" min="0.01" step="0.05" value={rateDraft[stage] ?? String(selectedConfig.baseRates[stage] ?? 1)} onChange={(event) => setRateDraft((draft) => ({ ...draft, [stage]: event.target.value }))} /></label>
-                    <label>Focus WIP<input type="number" min="1" step="1" value={assumptions.focusWip} onChange={(event) => updateOperatingAssumption(stage, "focusWip", event.target.value)} /></label>
-                    <label>Max concurrency<input type="number" min="1" step="1" value={assumptions.maximumConcurrency} onChange={(event) => updateOperatingAssumption(stage, "maximumConcurrency", event.target.value)} /></label>
-                    <label>Task-switch loss ratio<input type="number" min="0" max="1" step="0.05" value={assumptions.taskSwitchingLossRatio} onChange={(event) => updateOperatingAssumption(stage, "taskSwitchingLossRatio", event.target.value)} /></label>
-                  </fieldset>
-                );
-              })}
-            </div>
-            <button type="button" onClick={saveRates}>Save allocation</button>
-            {capacityError && <p className="settings-error" role="alert">{capacityError}</p>}
-            {arrivalRateError && <p className="settings-error" role="alert">{arrivalRateError}</p>}
-          </details>
+          <section className="panel-section capacity-launcher" aria-labelledby="capacity-launcher-heading">
+            <p className="eyebrow">Global model</p>
+            <h2 id="capacity-launcher-heading">Capacity & concurrency</h2>
+            <p>Set global rates, WIP limits, and operating concurrency without adding detail to the phase plan.</p>
+            <button type="button" onClick={() => setCapacityModalOpen(true)}>Configure capacity & concurrency</button>
+          </section>
 
           <details className="settings-panel">
             <summary>Initial feature backlog</summary>
@@ -614,6 +625,63 @@ export default function App() {
           </details>
         </aside>
       </div>
+      {capacityModalOpen && <div className="capacity-modal-backdrop" onMouseDown={(event) => {
+        if (event.target === event.currentTarget) closeCapacityModal();
+      }}>
+        <section className="capacity-modal" role="dialog" aria-modal="true" aria-labelledby="capacity-modal-heading" tabIndex={-1} onKeyDown={(event) => {
+          if (event.key === "Escape") closeCapacityModal();
+        }}>
+          <header className="capacity-modal-header">
+            <div>
+              <p className="eyebrow">Global model</p>
+              <h2 id="capacity-modal-heading">Capacity & concurrency</h2>
+            </div>
+            <button type="button" className="modal-close" aria-label="Close capacity settings" onClick={closeCapacityModal}>×</button>
+          </header>
+          <p className="capacity-modal-intro">These settings apply across the simulation. Phase-plan entries only choose which flow policies are active.</p>
+          <div className="capacity-modal-global">
+            <label className="arrival-rate-field" htmlFor="arrival-rate">
+              <span>Average backlog pushes / day</span>
+              <input id="arrival-rate" type="number" min="0" step="0.1" value={arrivalRateInput} onChange={(event) => setArrivalRateInput(event.target.value)} />
+            </label>
+            <label className="arrival-rate-field" htmlFor="wip-assistance-effectiveness">
+              <span>WIP assistance effectiveness</span>
+              <input id="wip-assistance-effectiveness" type="number" min="0" max="1" step="0.05" value={wipAssistanceInput} onChange={(event) => setWipAssistanceInput(event.target.value)} />
+            </label>
+          </div>
+          <section className="capacity-modal-section" aria-labelledby="stage-capacity-heading">
+            <h3 id="stage-capacity-heading">Processing capacity & concurrency</h3>
+            <p>Only active stages process work. Their rate is shared by actively worked cards.</p>
+            <div className="stage-allocation-list">
+              {activeWorkflowStages.map((stage) => {
+                const assumptions = operatingDraft[stage] ?? selectedConfig.operatingAssumptions?.[stage] ?? { focusWip: 5, maximumConcurrency: 16, taskSwitchingLossRatio: 0.2 };
+                return (
+                  <fieldset key={stage}>
+                    <legend>{stage}</legend>
+                    <label htmlFor={`rate-${stage}`}>Daily processing rate<input id={`rate-${stage}`} type="number" min="0.01" step="0.05" value={rateDraft[stage] ?? String(selectedConfig.baseRates[stage] ?? 1)} onChange={(event) => setRateDraft((draft) => ({ ...draft, [stage]: event.target.value }))} /></label>
+                    <label>Focus WIP<input type="number" min="1" step="1" value={assumptions.focusWip} onChange={(event) => updateOperatingAssumption(stage, "focusWip", event.target.value)} /></label>
+                    <label>Max concurrency<input type="number" min="1" step="1" value={assumptions.maximumConcurrency} onChange={(event) => updateOperatingAssumption(stage, "maximumConcurrency", event.target.value)} /></label>
+                    <label>Task-switch loss ratio<input type="number" min="0" max="1" step="0.05" value={assumptions.taskSwitchingLossRatio} onChange={(event) => updateOperatingAssumption(stage, "taskSwitchingLossRatio", event.target.value)} /></label>
+                  </fieldset>
+                );
+              })}
+            </div>
+          </section>
+          <section className="capacity-modal-section" aria-labelledby="wip-limit-heading">
+            <h3 id="wip-limit-heading">WIP limits</h3>
+            <p>These limits are used whenever a phase enables WIP limits. Integration is a passive handoff stage, but can still have a WIP limit.</p>
+            <div className="wip-limit-list">
+              {wipLimitStages.map((stage) => <label key={stage}>{stage}<input type="number" min="0" step="1" value={wipLimitDraft[stage] ?? String(selectedConfig.wipLimits?.[stage] ?? 5)} onChange={(event) => setWipLimitDraft((draft) => ({ ...draft, [stage]: event.target.value }))} /></label>)}
+            </div>
+          </section>
+          {capacityError && <p className="settings-error" role="alert">{capacityError}</p>}
+          {arrivalRateError && <p className="settings-error" role="alert">{arrivalRateError}</p>}
+          <footer className="capacity-modal-actions">
+            <button type="button" className="secondary-button" onClick={closeCapacityModal}>Cancel</button>
+            <button type="button" onClick={saveRates}>Save global settings</button>
+          </footer>
+        </section>
+      </div>}
     </main>
   );
 }

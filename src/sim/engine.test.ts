@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { calculateMetrics, effectiveCapacityFor, runScenario } from "./engine";
+import { calculateMetrics, effectiveCapacityFor, runScenario, testingEffortFor } from "./engine";
 import { runMeanScenario, validateMeanSeedCount } from "./mean";
 import { projectPhasesForPlan } from "./project";
 import { scenarios } from "./scenarios";
@@ -28,6 +28,28 @@ describe("FlowLab simulation engine", () => {
 
   it("is deterministic for a fixed seed", () => {
     expect(runScenario(scenarios.baseline, 42).snapshots).toEqual(runScenario(scenarios.baseline, 42).snapshots);
+  });
+
+  it("adds delayed-feedback effort to testing as well as feedback fixes", () => {
+    expect(testingEffortFor(1, 0.2, 3, 8)).toEqual({ effort: 2, delayDays: 5 });
+
+    const result = runScenario({
+      ...scenarios.baseline,
+      horizonDays: 5,
+      warmupDays: 0,
+      arrivalRatePerDay: 0,
+      batchDays: [0],
+      batchSize: 1,
+      initialBacklog: { pbiCount: 1, bugCount: 0 },
+      initialInventory: undefined,
+      featureBacklog: { featureCount: 0, minPbisPerFeature: 5, maxPbisPerFeature: 10, baseBugEffort: 1, feedbackDelayEffortFactor: 0.5 },
+      baseRates: { Development: 1, Test: 0.1 },
+      serviceEffort: { Development: { min: 1, max: 1 }, Test: { min: 1, max: 1 } },
+    }, 42);
+
+    const item = result.items.find((candidate) => candidate.type === "PBI");
+    expect(item?.enteredAt.Test).toBe(2);
+    expect(item?.plannedEffort.Test).toBe(2);
   });
 
   it("keeps the finite initial backlog represented in every snapshot", () => {

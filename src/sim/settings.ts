@@ -1,4 +1,4 @@
-import type { ActiveStage, CapacityIncident, FeatureBacklogConfig, FeatureFocusPolicy, InitialBacklog, InitialInventory, OperatingAssumptions, ScenarioConfig, SwarmPolicy } from "./types";
+import type { ActiveStage, CapacityIncident, FeatureBacklogConfig, FeatureFocusPolicy, InitialBacklog, InitialInventory, OperatingAssumptions, ScenarioConfig, Stage, SwarmPolicy } from "./types";
 import { activeStages } from "./workflow";
 
 function assertPositiveRate(rate: number, label: string) {
@@ -90,6 +90,16 @@ export function validateBacklogRanking(enabled: boolean): boolean {
   return enabled;
 }
 
+export function validateWipLimits(config: ScenarioConfig, limits: Partial<Record<Stage, number>>): Partial<Record<Stage, number>> {
+  const limitedStages = config.workflow.stages.slice(1, -1);
+  for (const [stage, limit] of Object.entries(limits)) {
+    if (!limitedStages.includes(stage) || !Number.isInteger(limit) || (limit ?? -1) < 0) {
+      throw new Error("WIP limits must be non-negative whole numbers for non-terminal workflow stages.");
+    }
+  }
+  return Object.fromEntries(limitedStages.map((stage) => [stage, limits[stage] ?? 5]));
+}
+
 export function validateOperatingAssumptions(assumptions: OperatingAssumptions): OperatingAssumptions {
   if (!Number.isInteger(assumptions.focusWip) || assumptions.focusWip < 1) {
     throw new Error("Focus WIP must be a positive whole number.");
@@ -146,6 +156,7 @@ export interface SimulationSettings {
   featureBacklog?: FeatureBacklogConfig;
   featureFocus?: FeatureFocusPolicy | null;
   backlogRanking?: boolean;
+  wipLimits?: Partial<Record<Stage, number>>;
   wipAssistanceEffectiveness?: number;
   operatingAssumptions?: Partial<Record<ActiveStage, OperatingAssumptions>>;
   baseRates?: Partial<Record<ActiveStage, number>>;
@@ -174,6 +185,9 @@ export function withSimulationSettings(config: ScenarioConfig, settings: Simulat
   const backlogRanking = settings.backlogRanking === undefined
     ? withArrival.backlogRanking
     : validateBacklogRanking(settings.backlogRanking);
+  const wipLimits = settings.wipLimits === undefined
+    ? withArrival.wipLimits
+    : validateWipLimits(withArrival, settings.wipLimits);
   const withRates = withProcessingRates(withArrival, settings.baseRates ?? {});
   const wipAssistanceEffectiveness = settings.wipAssistanceEffectiveness === undefined
     ? (withRates.wipAssistanceEffectiveness ?? 0.75)
@@ -185,5 +199,5 @@ export function withSimulationSettings(config: ScenarioConfig, settings: Simulat
     : withOperating.incident;
   const swarm = settings.swarm ?? withOperating.swarm;
   if (swarm && active.length >= 2) validateSwarm(withOperating, swarm);
-  return { ...withOperating, initialBacklog, initialInventory, featureBacklog, featureFocus, backlogRanking, wipAssistanceEffectiveness, incident, swarm: active.length >= 2 ? swarm : undefined };
+  return { ...withOperating, initialBacklog, initialInventory, featureBacklog, featureFocus, backlogRanking, wipLimits, wipAssistanceEffectiveness, incident, swarm: active.length >= 2 ? swarm : undefined };
 }

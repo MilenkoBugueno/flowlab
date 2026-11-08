@@ -1506,6 +1506,7 @@ Given("an active initial backlog item with enough remaining work to finish today
     horizonDays: 4,
     batchDays: [0],
     batchSize: 1,
+    featureBacklog: { featureCount: 0, minPbisPerFeature: 5, maxPbisPerFeature: 10, baseBugEffort: 1, feedbackDelayEffortFactor: 0 },
     baseRates: { Development: 1, Test: 1 },
     serviceEffort: { Development: { min: 1, max: 1 }, Test: { min: 1, max: 1 } },
     operatingAssumptions: {
@@ -1726,7 +1727,9 @@ Then("Test WIP still limits how many ready PBIs can enter", function (this: Flow
 Given("a tested PBI from feature {string}", function (this: FlowLabWorld, _featureTitle: string) {
   this.config = featureFlowConfig({
     horizonDays: 41,
-    featureBacklog: { featureCount: 1, minPbisPerFeature: 1, maxPbisPerFeature: 1, baseBugEffort: 1, feedbackDelayEffortFactor: 0.1 },
+    // This scenario isolates traceability. Delay-priced testing is exercised
+    // by the engine tests; leave this PBI's base Test effort unchanged.
+    featureBacklog: { featureCount: 1, minPbisPerFeature: 1, maxPbisPerFeature: 1, baseBugEffort: 1, feedbackDelayEffortFactor: 0 },
     baseRates: { Development: 1, Test: 1 },
     serviceEffort: { Development: { min: 21, max: 21 }, Test: { min: 19, max: 19 } },
     operatingAssumptions: {

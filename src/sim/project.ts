@@ -84,8 +84,22 @@ export function projectPhasesForPlan(header: ScenarioConfig, plan: PhasePlanEntr
     const interventions = phaseInterventionsForEntry(entry);
     // Imported phase settings can contain deliberate rate/capacity differences.
     // Treat them as the base and only replace the three composable policies.
-    const phaseBase = entry.settings ? { ...header, ...clone(entry.settings) } : header;
+    const importedSettings = entry.settings && clone(entry.settings);
+    const importedLimits = importedSettings?.wipLimits;
+    const phaseBase = importedSettings
+      ? {
+        ...header,
+        ...importedSettings,
+        // An empty map explicitly clears WIP for a non-WIP phase. It is not a
+        // configured set of limits to reuse when that phase is later enabled.
+        wipLimits: importedLimits && Object.keys(importedLimits).length ? importedLimits : header.wipLimits,
+      }
+      : header;
     const settings = phaseSettingsFor(configForPhaseInterventions(phaseBase, interventions));
+    // Project settings are JSON, so `undefined` would disappear and the
+    // header's global WIP settings could leak into a baseline phase. An empty
+    // map is the explicit "no WIP policy" value.
+    if (!interventions.wipLimits) settings.wipLimits = {};
     const phase: ProjectPhase = {
       id: entry.id,
       label: entry.interventions === undefined && entry.scenarioId
@@ -126,7 +140,7 @@ export function phasePlanFromProject(project: ProjectFile): PhasePlanEntry[] {
       id: phase.id,
       scenarioId: profile,
       interventions: {
-        wipLimits: phase.settings.wipLimits !== undefined,
+        wipLimits: Object.keys(phase.settings.wipLimits ?? {}).length > 0,
         featureFocus: phase.settings.featureFocus !== undefined,
         backlogRanking: phase.settings.backlogRanking === true,
       },

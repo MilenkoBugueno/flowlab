@@ -8,6 +8,26 @@ const completedStageColor = "#34d399";
 
 type ChartRow = { day: number } & Record<Stage, number>;
 
+function phaseLabelLines(label: string, bandWidth: number): string[] {
+  const maxCharacters = Math.max(8, Math.floor(bandWidth / 5));
+  const words = label.split(" ");
+  const lines: string[] = [];
+  let line = "";
+
+  for (const word of words) {
+    if (!line) {
+      line = word;
+    } else if (`${line} ${word}`.length <= maxCharacters) {
+      line = `${line} ${word}`;
+    } else {
+      lines.push(line);
+      line = word;
+    }
+  }
+  if (line) lines.push(line);
+  return lines;
+}
+
 interface Props {
   result: SimulationViewResult;
   selectedDay: number;
@@ -32,7 +52,7 @@ export function CfdChart({ result, selectedDay, onSelectDay, showInactiveWork, o
   ]));
   const width = 920;
   const height = 390;
-  const margin = { top: 40, right: 28, bottom: 52, left: 54 };
+  const margin = { top: 58, right: 28, bottom: 52, left: 54 };
   const rows: ChartRow[] = useMemo(
     () => snapshots.map((snapshot) => ({ day: snapshot.day, ...snapshot.states })),
     [snapshots],
@@ -41,6 +61,11 @@ export function CfdChart({ result, selectedDay, onSelectDay, showInactiveWork, o
   const maxY = Math.max(1, d3.max(stacked, (series) => d3.max(series, (point) => point[1])) ?? 1);
   const x = d3.scaleLinear().domain([0, config.horizonDays - 1]).range([margin.left, width - margin.right]);
   const y = d3.scaleLinear().domain([0, maxY]).nice().range([height - margin.bottom, margin.top]);
+  const phaseBands = (config.projectPhases ?? []).map((phase) => ({
+    ...phase,
+    left: x(phase.startDay),
+    right: phase.endDay === config.horizonDays - 1 ? width - margin.right : x(phase.endDay + 1),
+  }));
   const area = d3
     .area<d3.SeriesPoint<ChartRow>>()
     .x((point) => x(point.data.day))
@@ -138,6 +163,24 @@ export function CfdChart({ result, selectedDay, onSelectDay, showInactiveWork, o
             </pattern>
           ))}
         </defs>
+        {phaseBands.length > 0 && <g className="phase-labels" aria-label="Project phases">
+          {phaseBands.map((phase) => {
+            const bandWidth = Math.max(0, phase.right - phase.left);
+            const labelLines = phaseLabelLines(phase.label, bandWidth);
+            const firstLineY = 25 - (labelLines.length - 1) * 5;
+            return <g key={phase.id}>
+              <title>Days {phase.startDay}–{phase.endDay}: {phase.label}</title>
+              <rect x={phase.left} y="4" width={bandWidth} height="34" className="phase-band" />
+              <text
+                x={phase.left + bandWidth / 2}
+                y={firstLineY}
+                className="phase-label"
+                textAnchor="middle"
+              >{labelLines.map((line, index) => <tspan key={`${phase.id}-${index}`} x={phase.left + bandWidth / 2} dy={index === 0 ? 0 : 10}>{line}</tspan>)}</text>
+            </g>;
+          })}
+          <line x1={margin.left} x2={width - margin.right} y1="38" y2="38" className="phase-band-line" />
+        </g>}
         <rect x={margin.left} y={margin.top} width={width - margin.left - margin.right} height={height - margin.top - margin.bottom} className="plot-background" />
         {yTicks.map((tick) => (
           <g key={tick}>
@@ -187,10 +230,9 @@ export function CfdChart({ result, selectedDay, onSelectDay, showInactiveWork, o
             <text x={x(config.swarm.startDay) + 4} y={margin.top + 30} className="annotation">Swarm begins</text>
           </g>
         )}
-        {(config.projectPhases ?? []).filter((phase) => phase.startDay > 0).map((phase) => (
+        {phaseBands.filter((phase) => phase.startDay > 0).map((phase) => (
           <g key={phase.id}>
             <line x1={x(phase.startDay)} x2={x(phase.startDay)} y1={margin.top} y2={height - margin.bottom} className="phase-line" />
-            <text x={x(phase.startDay) + 4} y={margin.top + 46} className="annotation">{phase.label}</text>
           </g>
         ))}
         {ticks.map((tick) => (

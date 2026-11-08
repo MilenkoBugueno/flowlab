@@ -45,7 +45,7 @@ describe("project files", () => {
       { label: "Baseline", startDay: 0, endDay: 19 },
       { label: "WIP Limits", startDay: 20, endDay: 49 },
     ]);
-    expect(phases[0].settings.wipLimits).toBeUndefined();
+    expect(phases[0].settings.wipLimits).toEqual({});
     expect(phases[1].settings.wipLimits).toEqual({ Development: 5, Integration: 5, Test: 5 });
     expect(phases[1].settings.arrivalRatePerDay).toBe(2.4);
     expect(phases[1].settings.baseRates).toEqual({ Development: 2, Test: 1 });
@@ -80,6 +80,21 @@ describe("project files", () => {
     ]);
     expect(phases[0].label).toBe("Order backlog by ranking");
     expect(phases[0].settings.backlogRanking).toBe(true);
+  });
+
+  it("does not leak global WIP limits into a phase where the policy is off", () => {
+    const header = {
+      ...scenarios.baseline,
+      horizonDays: 20,
+      wipLimits: { Development: 3, Integration: 2, Test: 1 },
+    };
+    const phases = projectPhasesForPlan(header, [{
+      id: "baseline",
+      durationDays: 20,
+      interventions: { wipLimits: false, featureFocus: false, backlogRanking: false },
+    }]);
+
+    expect(configForProjectDay({ ...header, projectPhases: phases }, 0).config.wipLimits).toEqual({});
   });
 
   it("composes independently selected interventions in one phase", () => {

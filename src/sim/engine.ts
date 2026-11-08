@@ -88,6 +88,16 @@ export function feedbackBugEffortFor(baseBugEffort: number, feedbackDelayEffortF
   return { effort: baseBugEffort + feedbackDelayEffortFactor * delayDays, delayDays };
 }
 
+/**
+ * Delayed validation also makes the original testing work harder: context has
+ * gone stale and changes are more likely to have side-effects. The same factor
+ * that sizes a feedback Bug therefore adds effort when work finally enters Test.
+ */
+export function testingEffortFor(baseTestEffort: number, feedbackDelayEffortFactor: number, developedAt: number, testEnteredAt: number): { effort: number; delayDays: number } {
+  const delayDays = Math.max(0, testEnteredAt - developedAt);
+  return { effort: baseTestEffort + feedbackDelayEffortFactor * delayDays, delayDays };
+}
+
 export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult {
   const stages = config.workflow.stages;
   const entryStage = stages[0];
@@ -175,8 +185,16 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
     };
   };
 
-  const setEffort = (item: WorkItem, stage: ActiveStage) => {
-    item.effortRemaining = item.plannedEffort[stage] ?? 0;
+  const setEffort = (item: WorkItem, stage: ActiveStage, day: number) => {
+    const baseEffort = item.plannedEffort[stage] ?? 0;
+    if (stage === testStage && item.developedAt !== undefined) {
+      const { effort } = testingEffortFor(baseEffort, featureBacklog.feedbackDelayEffortFactor, item.developedAt, day);
+      item.plannedEffort[stage] = effort;
+      item.totalEffort += effort - baseEffort;
+      item.effortRemaining = effort;
+      return;
+    }
+    item.effortRemaining = baseEffort;
   };
 
   const enter = (day: number, item: WorkItem, stage: Stage) => {
@@ -185,7 +203,7 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
     item.status = "waiting";
     item.active = false;
     item.enteredAt[stage] = day;
-    if (active.includes(stage)) setEffort(item, stage);
+    if (active.includes(stage)) setEffort(item, stage, day);
     else item.effortRemaining = 0;
     record(day, "entered-stage", item, stage);
     recordMovement(day, from, stage);
