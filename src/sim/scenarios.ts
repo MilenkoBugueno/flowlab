@@ -57,7 +57,7 @@ export const scenarios: Record<ScenarioId, ScenarioConfig> = {
   ranking: {
     id: "ranking",
     label: "Order backlog by ranking",
-    summary: "The highest-ranked eligible Feature work, including feedback Bugs, is selected first for every push or pull.",
+    summary: "The highest-ranked eligible Feature work, including feedback Bugs, enters from Backlog first.",
     ...common,
     backlogRanking: true,
   },

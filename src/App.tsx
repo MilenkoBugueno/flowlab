@@ -13,7 +13,7 @@ import { activeStages, withWorkflow } from "./sim/workflow";
 
 const metricLabels: Array<[keyof Metrics, string, string]> = [
   ["completedItems", "Completed items", "More is better, if cycle time remains healthy."],
-  ["completedFeatures", "Completed features", "Features whose PBIs and generated feedback Bugs are all Done."],
+  ["completedFeatures", "Completed features", "All features whose PBIs and generated feedback Bugs are Done in this simulation."],
   ["p85CycleTime", "p85 cycle time", "Days from first active work to completion for 85% of completed work."],
   ["maxReviewWip", "Peak constraint WIP", "The highest number of items in the constrained workflow stage."],
   ["reviewQueueDays", "Constraint queue-days", "Total waiting pressure in the constrained workflow stage."],
@@ -442,7 +442,7 @@ export default function App() {
             <div className="phase-plan-editor" aria-labelledby="phase-plan-heading">
               <h3 id="phase-plan-heading">Phase plan</h3>
               <p>Each duration is in working days. The plan determines when the simulation stops.</p>
-              <small>WIP limits cap admission. Swarming shares unused capacity with a bottleneck. Backlog ranking selects the highest-ranked eligible work first.</small>
+              <small>WIP limits cap admission. Swarming shares unused capacity with a bottleneck. Backlog ranking selects the highest-ranked eligible Backlog work first.</small>
               {phasePlan.map((phase, index) => {
                 const startDay = phasePlan.slice(0, index).reduce((total, entry) => total + entry.durationDays, 0);
                 const endDay = startDay + phase.durationDays - 1;
@@ -523,7 +523,7 @@ export default function App() {
             <summary>Interventions</summary>
             <section className="intervention-editor" aria-labelledby="completion-focus-heading">
               <h2 id="completion-focus-heading">Swarming</h2>
-              <p>Unused capacity can support work at a constrained stage. Swarming does not change work priority; priority focus applies only when a phase combines WIP limits, Swarming, and Backlog ranking.</p>
+              <p>Unused capacity can support work at a constrained stage. Swarming does not change work priority; with WIP limits and Backlog ranking, it directs help to the highest-ranked active work without blocking other eligible work.</p>
               <label className="completion-focus-toggle"><span>Enable swarming</span><input type="checkbox" checked={featureFocusEnabled} onChange={(event) => setFeatureFocusEnabled(event.target.checked)} /></label>
               <label>Start day<input type="number" min="0" step="1" disabled={!featureFocusEnabled} value={featureFocusStartDay} onChange={(event) => setFeatureFocusStartDay(event.target.value)} /></label>
               <button type="button" onClick={saveFeatureFocus}>Save swarming</button>
@@ -574,7 +574,7 @@ export default function App() {
             <summary>Model notes</summary>
             <p>Without a Development WIP limit, the daily push rate releases Backlog work into Development. A Development WIP limit changes that admission to pull.</p>
             <p>WIP limits never transfer capacity, so unused capacity stays idle unless Swarming is active. Swarming reassigns unused capacity to a bottleneck.</p>
-            <p>Backlog ranking selects the highest-ranked eligible work for every push or pull. WIP limits, Swarming, and Backlog ranking together activate priority focus: WIP stays bounded, bottlenecks are supported, and capacity concentrates on the highest-ranked Feature.</p>
+            <p>Backlog ranking selects the highest-ranked eligible Backlog work first. Work already in flight keeps its downstream queue order, preventing a mid-project ranking change from starving it and increasing feedback delay. WIP limits, Swarming, and Backlog ranking together activate priority focus: WIP stays bounded, bottlenecks are supported, and capacity concentrates on the highest-ranked active work without leaving other capacity idle.</p>
             <p>Integration holds finished Development work until Test accepts it; it never receives capacity or concurrency settings.</p>
             <p>Compare cycle time, completions, and queue-days—not just the shape of the CFD.</p>
           </details>

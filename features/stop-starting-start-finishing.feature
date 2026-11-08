@@ -4,10 +4,10 @@ Feature: Swarming
   bottleneck. It does not change backlog admission or restrict work to one
   Feature by itself.
 
-  When Swarming is combined with backlog ranking, it concentrates new
-  admissions and borrowed capacity on the highest-ranked unfinished Feature.
-  The WIP limits + Swarming + ranking combination therefore keeps WIP bounded
-  while helping the highest-ranked work finish quickly.
+  When Swarming is combined with backlog ranking, it selects the highest-ranked
+  eligible work first and directs borrowed capacity to the highest-ranked active
+  work. Lower-ranked work stays eligible when no higher-ranked item can move,
+  so the flow does not drain unnecessarily.
 
   Scenario: Borrow spare Development capacity for an active Test bottleneck
     Given Swarming is active with spare Development capacity and active Test work
@@ -26,9 +26,10 @@ Feature: Swarming
     When I simulate the Swarming workflow
     Then Development does not lend capacity before its own work is complete
 
-  Scenario: Focus the highest-ranked Feature with WIP limits, Swarming, and ranking
+  Scenario: Prioritize the highest-ranked Feature with WIP limits, Swarming, and ranking
     Given WIP limits, Swarming, and backlog ranking are active for ranked Features
     When I simulate the ranked Swarming workflow
     Then Feature 001 is the current ranked focus
-    And only Feature 001 work is admitted from Backlog into Development
+    And Feature 001 is admitted before lower-ranked work when it is eligible
+    And lower-ranked work is admitted when Feature 001 has no Backlog work ready
     And spare capacity supports Feature 001 at the Test bottleneck

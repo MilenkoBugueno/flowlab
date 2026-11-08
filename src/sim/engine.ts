@@ -239,17 +239,19 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
   };
   const completionFocusFor = (day: number, dayConfig: ScenarioConfig): Feature | undefined => {
     // Swarming by itself only shares spare capacity. When it is paired with
-    // WIP limits and ranking, it also concentrates new admissions and borrowed
-    // capacity on the highest-ranked unfinished Feature.
+    // WIP limits and ranking, it identifies the highest-ranked unfinished
+    // Feature so Swarming can direct help to its active work. It never blocks
+    // lower-ranked work when no higher-ranked item is eligible to move.
     const hasWipLimits = Object.keys(dayConfig.wipLimits ?? {}).length > 0;
     if (!dayConfig.featureFocus || !dayConfig.backlogRanking || !hasWipLimits || day < dayConfig.featureFocus.startDay) return undefined;
     const unfinished = features.filter((feature) => feature.completedAt === undefined);
-    if (dayConfig.backlogRanking) return unfinished.sort((first, second) => first.ranking - second.ranking)[0];
-    return unfinished[0];
+    return unfinished.sort((first, second) => first.ranking - second.ranking)[0];
   };
-  const isFocused = (item: WorkItem, focus: Feature | undefined): boolean => !focus || item.featureId === focus.id;
-  const compareStagePriority = (stage: Stage, dayConfig: ScenarioConfig, first: WorkItem, second: WorkItem): number => {
-    if (dayConfig.backlogRanking) return compareBacklogRanking(first, second);
+  const compareStageQueue = (stage: Stage, first: WorkItem, second: WorkItem): number => {
+    // Backlog ranking determines which new work enters the workflow. Once an
+    // item is already in flight, preserve its queue order at downstream
+    // handoffs so enabling ranking mid-project cannot starve it there and make
+    // its feedback delay (and resulting rework) grow without bound.
     return (first.enteredAt[stage] ?? first.arrivedAt) - (second.enteredAt[stage] ?? second.arrivedAt)
       || compareQueuePosition(first, second);
   };
@@ -286,7 +288,7 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
     const target = nextStage(from, stages);
     const candidates = items
       .filter((item) => item.stage === from && item.status === "blocked")
-      .sort((first, second) => compareStagePriority(from, dayConfig, first, second));
+      .sort((first, second) => compareStageQueue(from, first, second));
     for (const item of candidates) {
       if (target === testStage && item.type === "PBI" && !featureTestGateOpen(item, dayConfig)) continue;
       if (target === exitStage) complete(day, item, from);
@@ -298,7 +300,7 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
     const target = nextStage(from, stages);
     const candidates = items
       .filter((item) => item.stage === from && item.status === "waiting")
-      .sort((first, second) => compareStagePriority(from, dayConfig, first, second));
+      .sort((first, second) => compareStageQueue(from, first, second));
     for (const item of candidates) {
       if (target === testStage && item.type === "PBI" && !featureTestGateOpen(item, dayConfig)) continue;
       if (target === exitStage) complete(day, item, from);
@@ -306,9 +308,9 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
     }
   };
 
-  const admitBacklogWork = (day: number, pushAllowance: number, focus: Feature | undefined, dayConfig: ScenarioConfig) => {
+  const admitBacklogWork = (day: number, pushAllowance: number, dayConfig: ScenarioConfig) => {
     const entryItems = items
-      .filter((item) => item.stage === entryStage && isFocused(item, focus))
+      .filter((item) => item.stage === entryStage)
       .sort((a, b) => dayConfig.backlogRanking
         ? compareBacklogRanking(a, b)
         : a.arrivedAt - b.arrivedAt || compareQueuePosition(a, b));
@@ -326,12 +328,12 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
     }
   };
 
-  const activateWork = (day: number, stage: ActiveStage, maximumConcurrency: number, dayConfig: ScenarioConfig) => {
+  const activateWork = (day: number, stage: ActiveStage, maximumConcurrency: number) => {
     const activeCount = concurrentItemCount(items, stage);
     const openSlots = Math.max(0, maximumConcurrency - activeCount);
     const waiting = items
       .filter((item) => item.stage === stage && item.status === "waiting")
-      .sort((first, second) => compareStagePriority(stage, dayConfig, first, second));
+      .sort((first, second) => compareStageQueue(stage, first, second));
     for (const item of waiting.slice(0, openSlots)) {
       item.status = "active";
       item.active = true;
@@ -378,7 +380,7 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
         const activeWork = items.filter((item) => item.stage === stage && item.status === "active");
         const priorityWork = [...activeWork].sort((first, second) => dayConfig.backlogRanking
           ? compareBacklogRanking(first, second)
-          : compareStagePriority(stage, dayConfig, first, second))[0];
+          : compareStageQueue(stage, first, second))[0];
         return {
           stage,
           activeWork,
@@ -463,18 +465,17 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
     const pushAllowance = poisson(dayConfig.arrivalRatePerDay, demandRandom) + (config.batchDays.includes(day) ? config.batchSize : 0);
 
     // Stable daily event order: completed work moves, policies are implicit in rates,
-    // admissions/pulls happen, then available stages begin work. The all-three
-    // policy concentrates *new* Features at Backlog; it never pauses work already
-    // in flight. That lets a WIP-limited phase safely drain work inherited from an
-    // earlier push phase instead of deadlocking above its newly introduced limits.
+    // admissions/pulls happen, then available stages begin work. Ranking orders
+    // every eligible choice but never turns priority into an exclusive Feature
+    // gate, so a draining top-ranked Feature cannot leave capacity idle.
     [...stages.slice(1, -1)].reverse().forEach((stage) => {
       if (handoffs.has(stage)) pullHandoffWork(day, stage, dayConfig);
       else if (active.includes(stage)) moveBlocked(day, stage, dayConfig);
     });
-    admitBacklogWork(day, pushAllowance, featureFocus, dayConfig);
+    admitBacklogWork(day, pushAllowance, dayConfig);
     active.forEach((stage) => {
       const maximumConcurrency = dayConfig.operatingAssumptions?.[stage]?.maximumConcurrency ?? 16;
-      activateWork(day, stage, maximumConcurrency, dayConfig);
+      activateWork(day, stage, maximumConcurrency);
     });
     const operatingCapacity = active.map((stage) => {
       const baseCapacity = processingRateFor(stage, day, dayConfig);
@@ -574,7 +575,10 @@ export function calculateMetrics(items: WorkItem[], snapshots: DailySnapshot[], 
   const meanCycle = cycleTimes.length ? cycleTimes.reduce((total, value) => total + value, 0) / cycleTimes.length : null;
   return {
     completedItems: completed.length,
-    completedFeatures: features.filter((feature) => feature.completedAt !== undefined && feature.completedAt >= config.warmupDays).length,
+    // Feature completion is a whole-project outcome. Unlike the operational
+    // throughput measures above, it must include work completed during warm-up
+    // so that this metric agrees with every completion marker on the CFD.
+    completedFeatures: features.filter((feature) => feature.completedAt !== undefined).length,
     throughputPerWeek,
     medianCycleTime: percentile(cycleTimes, 0.5),
     p85CycleTime: percentile(cycleTimes, 0.85),

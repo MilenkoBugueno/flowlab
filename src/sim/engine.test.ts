@@ -337,6 +337,15 @@ describe("FlowLab simulation engine", () => {
     expect(metrics.p85CycleTime).toBe(5);
   });
 
+  it("counts completed features from the full simulation, including warm-up", () => {
+    const metrics = calculateMetrics([], [], { ...scenarios.baseline, warmupDays: 20 }, [
+      { id: "FEATURE-001", title: "Earlier feature", ranking: 1, pbiIds: [], bugIds: [], completedAt: 10 },
+      { id: "FEATURE-002", title: "Later feature", ranking: 2, pbiIds: [], bugIds: [], completedAt: 30 },
+    ]);
+
+    expect(metrics.completedFeatures).toBe(2);
+  });
+
   it("seeds the configured PBI and bug inventory without counting it as new arrivals", () => {
     const result = runScenario({
       ...scenarios.baseline,
@@ -548,7 +557,7 @@ describe("FlowLab simulation engine", () => {
     expect(result.items.filter((item) => item.stage === "Backlog").every((item) => item.ranking === undefined || item.ranking > 1)).toBe(true);
   });
 
-  it("pulls ranked work through a constrained handoff before lower-ranked work", () => {
+  it("keeps in-flight work in queue order through a constrained handoff when ranking begins", () => {
     const header = {
       ...scenarios.baseline,
       horizonDays: 3,
@@ -587,8 +596,42 @@ describe("FlowLab simulation engine", () => {
     const testEntry = result.events.find((event) => event.day === 2 && event.type === "entered-stage" && event.stage === "Test");
 
     expect(rankTwo?.positionId).toBeLessThan(rankOne?.positionId ?? Number.NEGATIVE_INFINITY);
-    expect(testEntry && result.items.find((item) => item.id === testEntry.itemId)?.featureId).toBe("FEATURE-001");
-    expect(rankTwo?.stage).toBe("Integration");
+    expect(testEntry && result.items.find((item) => item.id === testEntry.itemId)?.featureId).toBe("FEATURE-002");
+    expect(rankOne?.stage).toBe("Integration");
+  });
+
+  it("does not starve in-flight lower-ranked Features when ranking starts mid-project", () => {
+    const header = {
+      ...scenarios.baseline,
+      horizonDays: 80,
+      warmupDays: 20,
+      arrivalRatePerDay: 5,
+      initialInventory: {
+        Backlog: { pbiCount: 0, bugCount: 0 },
+        Development: { pbiCount: 0, bugCount: 0 },
+        Integration: { pbiCount: 0, bugCount: 0 },
+        Test: { pbiCount: 0, bugCount: 0 },
+      },
+      featureBacklog: { featureCount: 10, minPbisPerFeature: 3, maxPbisPerFeature: 7, baseBugEffort: 1, feedbackDelayEffortFactor: 0.2 },
+      baseRates: { Development: 4, Test: 2 },
+      operatingAssumptions: {
+        Development: { focusWip: 5, maximumConcurrency: 16, taskSwitchingLossRatio: 0.4 },
+        Test: { focusWip: 5, maximumConcurrency: 16, taskSwitchingLossRatio: 0.4 },
+      },
+      wipLimits: { Development: 5, Integration: 5, Test: 5 },
+    };
+    const plan = (backlogRanking: boolean) => [
+      { id: "phase-1", durationDays: 20, interventions: { wipLimits: false, featureFocus: false, backlogRanking: false } },
+      { id: "phase-2", durationDays: 20, interventions: { wipLimits: true, featureFocus: true, backlogRanking } },
+      { id: "phase-3", durationDays: 20, interventions: { wipLimits: true, featureFocus: true, backlogRanking } },
+      { id: "phase-4", durationDays: 20, interventions: { wipLimits: true, featureFocus: true, backlogRanking } },
+    ];
+    const ranked = runScenario({ ...header, projectPhases: projectPhasesForPlan(header, plan(true)) }, 42);
+    const unranked = runScenario({ ...header, projectPhases: projectPhasesForPlan(header, plan(false)) }, 42);
+
+    expect(ranked.metrics.completedFeatures).toBe(unranked.metrics.completedFeatures);
+    expect(ranked.metrics.completedFeatures).toBe(10);
+    expect(ranked.features[0].completedAt).toBeLessThan(unranked.features[0].completedAt ?? Infinity);
   });
 
   it("gates feature PBIs before Test and creates one delay-priced Bug for each tested PBI", () => {
@@ -710,7 +753,7 @@ describe("FlowLab simulation engine", () => {
     expect(admittedFeatureIds).toEqual(new Set(["FEATURE-001", "FEATURE-002", "FEATURE-003"]));
   });
 
-  it("combines WIP limits, Swarming, and ranking around the highest-ranked Feature", () => {
+  it("combines WIP limits, Swarming, and ranking without idling lower-ranked eligible work", () => {
     const result = runScenario({
       ...scenarios.baseline,
       horizonDays: 3,
@@ -742,10 +785,52 @@ describe("FlowLab simulation engine", () => {
       && snapshot.states.Integration <= 1
       && snapshot.states.Test <= 1
     ))).toBe(true);
-    expect(result.events
+    const developmentAdmissionRanks = result.events
       .filter((event) => event.type === "entered-stage" && event.stage === "Development")
-      .every((event) => result.items.find((item) => item.id === event.itemId)?.featureId === "FEATURE-001"))
-      .toBe(true);
+      .map((event) => result.items.find((item) => item.id === event.itemId)?.ranking);
+    expect(developmentAdmissionRanks[0]).toBe(1);
+    expect(developmentAdmissionRanks).toContain(2);
+  });
+
+  it("keeps the workflow supplied when a ranked priority Feature drains at a phase boundary", () => {
+    const header = {
+      ...scenarios.baseline,
+      horizonDays: 61,
+      warmupDays: 20,
+      arrivalRatePerDay: 5,
+      initialInventory: {
+        Backlog: { pbiCount: 0, bugCount: 0 },
+        Development: { pbiCount: 0, bugCount: 0 },
+        Integration: { pbiCount: 0, bugCount: 0 },
+        Test: { pbiCount: 0, bugCount: 0 },
+      },
+      featureBacklog: { featureCount: 10, minPbisPerFeature: 3, maxPbisPerFeature: 7, baseBugEffort: 1, feedbackDelayEffortFactor: 0.2 },
+      baseRates: { Development: 4, Test: 2 },
+      operatingAssumptions: {
+        Development: { focusWip: 5, maximumConcurrency: 16, taskSwitchingLossRatio: 0.4 },
+        Test: { focusWip: 5, maximumConcurrency: 16, taskSwitchingLossRatio: 0.4 },
+      },
+      wipLimits: { Development: 5, Integration: 5, Test: 5 },
+    };
+    const config = {
+      ...header,
+      projectPhases: projectPhasesForPlan(header, [
+        { id: "phase-1", durationDays: 20, interventions: { wipLimits: true, featureFocus: true, backlogRanking: false } },
+        { id: "phase-2", durationDays: 20, interventions: { wipLimits: true, featureFocus: true, backlogRanking: false } },
+        { id: "phase-3", durationDays: 21, interventions: { wipLimits: true, featureFocus: true, backlogRanking: true } },
+      ]),
+    };
+    const result = runScenario(config, 42);
+    const day46 = result.snapshots[46];
+
+    expect(day46.featureFocus?.id).toBe("FEATURE-001");
+    expect(day46.states.Development + day46.states.Integration + day46.states.Test).toBeGreaterThan(0);
+    expect(result.events.some((event) => (
+      event.day >= 40
+      && event.type === "entered-stage"
+      && event.stage === "Development"
+      && (result.items.find((item) => item.id === event.itemId)?.ranking ?? 1) > 1
+    ))).toBe(true);
   });
 
   it("uses Swarming for non-Feature work without creating a completion focus", () => {

@@ -13,11 +13,13 @@ Feature: Combine interventions within a phase
   - Swarming, which lends unused capacity to a constrained active stage
     without changing work priority.
   - Order backlog by ranking, which selects the lower numeric Feature ranking
-    first whenever eligible work is pushed or pulled.
+    first when eligible work is admitted from Backlog. Work already in flight
+    retains its downstream queue order.
 
   When all three policies are enabled, the highest-ranked unfinished Feature
-  becomes the priority focus: its work is admitted first and spare capacity
-  supports its active bottleneck.
+  becomes the priority focus: its eligible Backlog work is selected first and
+  spare capacity supports its active bottleneck. Lower-ranked work remains
+  eligible whenever it is needed to keep capacity from going idle.
 
   A policy becomes active at the start of its phase and is removed at the
   start of the next phase unless that next phase also enables it. Existing
@@ -39,8 +41,8 @@ Feature: Combine interventions within a phase
     And the Backlog contains ranked work for more than one unfinished Feature
     When I simulate the phase
     Then Development, Integration, and Test respect their configured WIP limits
-    And only the highest-ranked unfinished Feature is admitted from Backlog
     And highest-ranked eligible Backlog work is selected first
+    And lower-ranked Backlog work is admitted when no higher-ranked work is eligible
     And unused capacity is lent to the constrained stage handling highest-ranked active work
 
   Scenario: Use ranking with WIP limits without Swarming

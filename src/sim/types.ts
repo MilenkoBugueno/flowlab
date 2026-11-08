@@ -107,7 +107,7 @@ export interface ScenarioConfig {
   serviceEffort: Partial<Record<ActiveStage, { min: number; max: number }>>;
   operatingAssumptions?: Partial<Record<ActiveStage, OperatingAssumptions>>;
   wipLimits?: Partial<Record<Stage, number>>;
-  /** Select the highest-ranked eligible Feature work first for every push or pull while active. */
+  /** Select the highest-ranked eligible Feature work from Backlog first while active. */
   backlogRanking?: boolean;
   /** Legacy serialized name; controls the effectiveness of Swarming assistance. */
   wipAssistanceEffectiveness?: number;

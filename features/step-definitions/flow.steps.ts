@@ -1857,11 +1857,11 @@ Then("Development does not lend capacity before its own work is complete", funct
 Given("WIP limits, Swarming, and backlog ranking are active for ranked Features", function (this: FlowLabWorld) {
   this.config = swarmingConfig({
     horizonDays: 3,
-    arrivalRatePerDay: 0,
-    batchDays: [0],
-    batchSize: 3,
+    arrivalRatePerDay: 100,
+    batchDays: [],
+    batchSize: 0,
     initialInventory: {},
-    featureBacklog: { featureCount: 3, minPbisPerFeature: 1, maxPbisPerFeature: 1, baseBugEffort: 1, feedbackDelayEffortFactor: 0 },
+    featureBacklog: { featureCount: 2, minPbisPerFeature: 1, maxPbisPerFeature: 1, baseBugEffort: 1, feedbackDelayEffortFactor: 0 },
     wipLimits: { Development: 1, Integration: 1, Test: 1 },
     backlogRanking: true,
     baseRates: { Development: 1, Test: 0.1 },
@@ -1882,11 +1882,20 @@ Then("Feature 001 is the current ranked focus", function (this: FlowLabWorld) {
   assert.equal(resultFor(this).snapshots[0].featureFocus?.id, "FEATURE-001");
 });
 
-Then("only Feature 001 work is admitted from Backlog into Development", function (this: FlowLabWorld) {
+Then("Feature 001 is admitted before lower-ranked work when it is eligible", function (this: FlowLabWorld) {
   const result = resultFor(this);
   const admissions = result.events.filter((event) => event.type === "entered-stage" && event.stage === "Development");
   assert.ok(admissions.length > 0);
-  assert.ok(admissions.every((event) => result.items.find((item) => item.id === event.itemId)?.featureId === "FEATURE-001"));
+  assert.equal(result.items.find((item) => item.id === admissions[0].itemId)?.featureId, "FEATURE-001");
+});
+
+Then("lower-ranked work is admitted when Feature 001 has no Backlog work ready", function (this: FlowLabWorld) {
+  const result = resultFor(this);
+  assert.ok(result.events.some((event) => (
+    event.type === "entered-stage"
+    && event.stage === "Development"
+    && result.items.find((item) => item.id === event.itemId)?.featureId !== "FEATURE-001"
+  )));
 });
 
 Then("spare capacity supports Feature 001 at the Test bottleneck", function (this: FlowLabWorld) {
@@ -2013,7 +2022,7 @@ Then("the highest-ranked unfinished Feature becomes the priority focus on day {i
   assert.equal(resultFor(this).snapshots[day].featureFocus?.id, "FEATURE-001");
 });
 
-Then("lower-ranked Features are not admitted while that Feature remains unfinished", function (this: FlowLabWorld) {
+Then("lower-ranked Features remain in Backlog while higher-ranked work is eligible", function (this: FlowLabWorld) {
   const result = resultFor(this);
   assert.equal(result.events.filter((event) => event.day >= 51 && event.type === "entered-stage" && event.stage === "Development" && result.items.find((item) => item.id === event.itemId)?.featureId !== "FEATURE-001").length, 0);
 });
@@ -2431,19 +2440,19 @@ Then("Development, Integration, and Test respect their configured WIP limits", f
   }
 });
 
-Then("only the highest-ranked unfinished Feature is admitted from Backlog", function (this: FlowLabWorld) {
-  const result = resultFor(this);
-  for (const event of result.events.filter((candidate) => candidate.type === "entered-stage" && candidate.stage === "Development")) {
-    const item = result.items.find((candidate) => candidate.id === event.itemId);
-    assert.equal(item?.featureId, result.dailyLog[event.day].featureFocus?.id);
-  }
+Then("highest-ranked eligible Backlog work is selected first", function (this: FlowLabWorld) {
+  const firstRanking = resultFor(this).events
+    .filter((event) => event.type === "entered-stage" && event.stage === "Development")
+    .map((event) => resultFor(this).items.find((item) => item.id === event.itemId)?.ranking ?? Infinity)[0];
+  assert.equal(firstRanking, 1);
 });
 
-Then("highest-ranked eligible Backlog work is selected first", function (this: FlowLabWorld) {
-  const rankings = resultFor(this).events
-    .filter((event) => event.type === "entered-stage" && event.stage === "Development")
-    .map((event) => resultFor(this).items.find((item) => item.id === event.itemId)?.ranking ?? Infinity);
-  assert.ok(rankings.every((ranking, index) => index === 0 || ranking >= rankings[index - 1]));
+Then("lower-ranked Backlog work is admitted when no higher-ranked work is eligible", function (this: FlowLabWorld) {
+  assert.ok(resultFor(this).events.some((event) => (
+    event.type === "entered-stage"
+    && event.stage === "Development"
+    && (resultFor(this).items.find((item) => item.id === event.itemId)?.ranking ?? 1) > 1
+  )));
 });
 
 Then("unused capacity is lent to the constrained stage handling highest-ranked active work", function (this: FlowLabWorld) {

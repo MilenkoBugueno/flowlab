@@ -41,7 +41,7 @@ Feature: Project files with time-phased simulation settings
     When I load and simulate the project with seed 42
     Then WIP limits remain active in the second phase
     And the highest-ranked unfinished Feature becomes the priority focus on day 51
-    And lower-ranked Features are not admitted while that Feature remains unfinished
+    And lower-ranked Features remain in Backlog while higher-ranked work is eligible
 
   Scenario: Persist resolved settings instead of only the currently displayed controls
     Given I have configured a simulation with a custom workflow, rates, initial Features, and time-phased settings

@@ -47,9 +47,12 @@ The simulator includes Baseline, Swarming, WIP Limits, Backlog Ranking,
 WIP Limits + Swarming, and WIP Limits + Swarming + Backlog Ranking presets.
 WIP limits govern admission only: unused capacity stays idle unless Swarming
 is active. Swarming lends unused capacity to a bottleneck, while Backlog
-ranking selects the highest-ranked eligible work whenever work is pushed or
-pulled. All three policies together activate priority focus, bounding WIP,
-supporting bottlenecks, and concentrating effort on the highest-ranked Feature.
+ranking selects the highest-ranked eligible Backlog work whenever it enters the
+workflow. Work already in flight keeps its downstream queue order, so enabling
+ranking mid-project cannot starve it and inflate feedback delay. All three
+policies together activate priority focus, bounding WIP and supporting
+bottlenecks without blocking lower-ranked work when it is the only eligible
+work available.
 It is a learning model, not a calibrated prediction of a specific organization.
 
 Load [`samples/baseline-to-wip.flowlab.json`](samples/baseline-to-wip.flowlab.json)

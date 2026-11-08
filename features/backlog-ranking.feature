@@ -5,10 +5,11 @@ Feature: Rank Feature-backed backlog work
   1, Feature 002 has ranking 2, and so on. Ranking 1 is highest. Every PBI and
   feedback Bug linked to a Feature inherits that Feature's ranking.
 
-  While this intervention is active, every eligible push or pull chooses the
-  lowest numeric ranking first: admissions from Backlog, handoffs, and stage
-  activation all use the same priority. The Kanban board also presents ranked
-  items first in every column, without moving the work between workflow states.
+  While this intervention is active, an admission from Backlog chooses the
+  lowest numeric ranking first. Work already in the workflow retains its
+  downstream queue order, so beginning ranking mid-project does not starve it
+  or increase its feedback delay. The Kanban board also presents ranked items
+  first in every column, without moving the work between workflow states.
 
   Scenario: Assign a stable ranking to every seeded Feature and its PBIs
     Given an initial backlog with 3 Features
