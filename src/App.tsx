@@ -4,7 +4,7 @@ import { DailyLog } from "./DailyLog";
 import { KanbanBoard } from "./KanbanBoard";
 import { runScenario } from "./sim/engine";
 import { runMeanScenario, validateMeanSeedCount } from "./sim/mean";
-import { baselineConfigForComparison, configFromProjectFile, createProjectFile, noPhaseInterventions, parseProjectFile, phaseInterventionsForEntry, phasePlanFromProject, projectPhasesForPlan } from "./sim/project";
+import { baselineConfigForComparison, configFromProjectFile, createProjectFile, noPhaseInterventions, parseProjectFile, phaseInterventionsForEntry, phasePlanFromProject, phaseSettingsFor, projectPhasesForPlan } from "./sim/project";
 import type { PhaseInterventions, PhasePlanEntry } from "./sim/project";
 import { scenarios } from "./sim/scenarios";
 import { withSimulationSettings } from "./sim/settings";
@@ -211,6 +211,28 @@ export default function App() {
     setPhasePlanError(undefined);
   };
 
+  const updatePhaseCapacity = (id: string, stage: string, value: string) => {
+    const capacity = Number(value);
+    if (!Number.isFinite(capacity) || capacity <= 0) {
+      setPhasePlanError(`The daily capacity for ${stage} must be greater than zero.`);
+      return;
+    }
+    setPhasePlan((plan) => plan.map((phase) => {
+      if (phase.id !== id) return phase;
+      // A phase starts with the current project settings, then retains only
+      // its own capacity adjustment as the plan is edited.
+      const settings = phase.settings ?? phaseSettingsFor(customizedConfig);
+      return {
+        ...phase,
+        settings: {
+          ...settings,
+          baseRates: { ...settings.baseRates, [stage]: capacity },
+        },
+      };
+    }));
+    setPhasePlanError(undefined);
+  };
+
   const movePhase = (id: string, direction: -1 | 1) => {
     setPhasePlan((plan) => {
       const index = plan.findIndex((phase) => phase.id === id);
@@ -396,6 +418,19 @@ export default function App() {
                     <label><input type="checkbox" checked={interventions.wipLimits} onChange={(event) => updatePhaseIntervention(phase.id, "wipLimits", event.target.checked)} />WIP limits</label>
                     <label><input type="checkbox" checked={interventions.featureFocus} onChange={(event) => updatePhaseIntervention(phase.id, "featureFocus", event.target.checked)} />Swarming</label>
                     <label><input type="checkbox" checked={interventions.backlogRanking} onChange={(event) => updatePhaseIntervention(phase.id, "backlogRanking", event.target.checked)} />Order backlog by ranking</label>
+                  </div>
+                  <div className="phase-capacity-list" aria-label="Phase capacity per day">
+                    <span>Capacity / day</span>
+                    {activeWorkflowStages.map((stage) => <label key={stage}>{stage}
+                      <input
+                        aria-label={`${stage} capacity for days ${startDay} to ${endDay}`}
+                        type="number"
+                        min="0.1"
+                        step="0.1"
+                        value={phase.settings?.baseRates[stage] ?? customizedConfig.baseRates[stage] ?? 1}
+                        onChange={(event) => updatePhaseCapacity(phase.id, stage, event.target.value)}
+                      />
+                    </label>)}
                   </div>
                   <label>Days<input type="number" min="1" step="1" value={phase.durationDays} onChange={(event) => updatePhaseDuration(phase.id, event.target.value)} /></label>
                   <div className="phase-plan-actions">

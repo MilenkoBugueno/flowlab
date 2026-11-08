@@ -51,6 +51,29 @@ describe("project files", () => {
     expect(phases[1].settings.baseRates).toEqual({ Development: 2, Test: 1 });
   });
 
+  it("uses each phase's capacity on its own simulation days", () => {
+    const header = { ...scenarios.baseline, horizonDays: 4, baseRates: { Development: 1, Test: 1 } };
+    const phases = projectPhasesForPlan(header, [
+      {
+        id: "before",
+        durationDays: 2,
+        settings: { ...phaseSettingsFor(header), baseRates: { Development: 2, Test: 1 } },
+      },
+      {
+        id: "after",
+        durationDays: 2,
+        settings: { ...phaseSettingsFor(header), baseRates: { Development: 0.5, Test: 3 } },
+      },
+    ]);
+    const config = { ...header, projectPhases: phases };
+
+    expect(configForProjectDay(config, 1).config.baseRates).toEqual({ Development: 2, Test: 1 });
+    expect(configForProjectDay(config, 2).config.baseRates).toEqual({ Development: 0.5, Test: 3 });
+    const result = runScenario(config, 42);
+    expect(result.snapshots[1].operatingCapacity?.find((capacity) => capacity.stage === "Development")?.baseCapacity).toBe(2);
+    expect(result.snapshots[2].operatingCapacity?.find((capacity) => capacity.stage === "Development")?.baseCapacity).toBe(0.5);
+  });
+
   it("adds backlog ranking to its selected phase profile", () => {
     const phases = projectPhasesForPlan({ ...scenarios.baseline, horizonDays: 20 }, [
       { id: "ranking", scenarioId: "ranking", durationDays: 20 },
