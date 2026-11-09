@@ -172,7 +172,10 @@ export function configForProjectDay(config: ScenarioConfig, day: number): { conf
 export function baselineConfigForComparison(config: ScenarioConfig): ScenarioConfig {
   const withoutFlowPolicies = (settings: PhaseSettings): PhaseSettings => ({
     ...clone(settings),
-    wipLimits: undefined,
+    // An explicit empty map is how a baseline phase is represented in a
+    // project plan. Preserve that representation so the reference run has the
+    // same all-baseline phase behavior as the plan shown in the CFD.
+    wipLimits: {},
     featureFocus: undefined,
     backlogRanking: false,
   });

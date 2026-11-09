@@ -22,10 +22,15 @@ const metricLabels: Array<[keyof Metrics, string, string]> = [
 
 const defaultFeatureBacklog: FeatureBacklogConfig = {
   featureCount: 10,
-  minPbisPerFeature: 5,
-  maxPbisPerFeature: 10,
+  minPbisPerFeature: 3,
+  maxPbisPerFeature: 7,
   baseBugEffort: 1,
   feedbackDelayEffortFactor: 0.2,
+};
+
+const defaultOperatingAssumptions: Partial<Record<string, OperatingAssumptions>> = {
+  Development: { focusWip: 5, maximumConcurrency: 16, taskSwitchingLossRatio: 0.4 },
+  Test: { focusWip: 5, maximumConcurrency: 16, taskSwitchingLossRatio: 0.4 },
 };
 
 function formatMetric(key: keyof Metrics, value: Metrics[keyof Metrics]) {
@@ -40,8 +45,8 @@ function inventoryForStages(inventory: InitialInventory, stages: string[]): Init
 
 export default function App() {
   const [seedInput, setSeedInput] = useState("42");
-  const [arrivalRateInput, setArrivalRateInput] = useState("5");
-  const [savedArrivalRate, setSavedArrivalRate] = useState(5);
+  const [arrivalRateInput, setArrivalRateInput] = useState("4.2");
+  const [savedArrivalRate, setSavedArrivalRate] = useState(4.2);
   const [wipAssistanceInput, setWipAssistanceInput] = useState(String(scenarios.baseline.wipAssistanceEffectiveness ?? 0.75));
   const [savedWipAssistanceEffectiveness, setSavedWipAssistanceEffectiveness] = useState(scenarios.baseline.wipAssistanceEffectiveness ?? 0.75);
   const [arrivalRateError, setArrivalRateError] = useState<string>();
@@ -62,7 +67,7 @@ export default function App() {
   const [workflowError, setWorkflowError] = useState<string>();
   const [savedRates, setSavedRates] = useState<Record<string, number>>({ Development: 4, Test: 2 });
   const [rateDraft, setRateDraft] = useState<Record<string, string>>({});
-  const [savedOperatingAssumptions, setSavedOperatingAssumptions] = useState<Partial<Record<string, OperatingAssumptions>>>({});
+  const [savedOperatingAssumptions, setSavedOperatingAssumptions] = useState<Partial<Record<string, OperatingAssumptions>>>(defaultOperatingAssumptions);
   const [operatingDraft, setOperatingDraft] = useState<Partial<Record<string, OperatingAssumptions>>>({});
   const [savedWipLimits, setSavedWipLimits] = useState<Partial<Record<string, number>> | undefined>({ Development: 5, Integration: 5, Test: 5 });
   const [wipLimitDraft, setWipLimitDraft] = useState<Record<string, string>>({});

@@ -228,9 +228,42 @@ describe("project files", () => {
     expect(day.arrivalRatePerDay).toBe(2.4);
     expect(day.baseRates).toEqual({ Development: 5, Test: 2 });
     expect(day.operatingAssumptions).toEqual(selected.operatingAssumptions);
-    expect(day.wipLimits).toBeUndefined();
+    expect(day.wipLimits).toEqual({});
     expect(day.featureFocus).toBeUndefined();
     expect(day.backlogRanking).toBe(false);
+  });
+
+  it("uses the all-baseline phase plan as the reference for a multi-phase comparison", () => {
+    const header = {
+      ...scenarios.baseline,
+      horizonDays: 80,
+      warmupDays: 20,
+      arrivalRatePerDay: 4.2,
+      initialInventory: {
+        Backlog: { pbiCount: 0, bugCount: 0 },
+        Development: { pbiCount: 0, bugCount: 0 },
+        Integration: { pbiCount: 0, bugCount: 0 },
+        Test: { pbiCount: 0, bugCount: 0 },
+      },
+      featureBacklog: { featureCount: 10, minPbisPerFeature: 3, maxPbisPerFeature: 7, baseBugEffort: 1, feedbackDelayEffortFactor: 0.2 },
+      baseRates: { Development: 4, Test: 2 },
+      operatingAssumptions: {
+        Development: { focusWip: 5, maximumConcurrency: 16, taskSwitchingLossRatio: 0.4 },
+        Test: { focusWip: 5, maximumConcurrency: 16, taskSwitchingLossRatio: 0.4 },
+      },
+      wipLimits: { Development: 5, Integration: 5, Test: 5 },
+    };
+    const plan = (lastPhaseUsesWip: boolean) => Array.from({ length: 4 }, (_, index) => ({
+      id: `phase-${index + 1}`,
+      durationDays: 20,
+      interventions: { wipLimits: lastPhaseUsesWip && index === 3, featureFocus: false, backlogRanking: false },
+    }));
+    const allBaseline = { ...header, projectPhases: projectPhasesForPlan(header, plan(false)) };
+    const interventionRun = { ...header, projectPhases: projectPhasesForPlan(header, plan(true)) };
+    const reference = baselineConfigForComparison(interventionRun);
+
+    expect(runScenario(reference, 42).metrics).toEqual(runScenario(allBaseline, 42).metrics);
+    expect(runScenario(reference, 42).metrics.completedItems).toBe(73);
   });
 
   it("rejects incomplete and overlapping timelines", () => {
