@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { CfdChart } from "./chart/CfdChart";
 import { DailyLog } from "./DailyLog";
+import { FeatureBacklogView } from "./FeatureBacklogView";
+import { initialGuiLanguage, useGuiLocalization } from "./i18n";
+import type { GuiLanguage } from "./i18n";
 import { KanbanBoard } from "./KanbanBoard";
 import { runScenario } from "./sim/engine";
 import { runMeanScenario, validateMeanSeedCount } from "./sim/mean";
@@ -44,6 +47,9 @@ function inventoryForStages(inventory: InitialInventory, stages: string[]): Init
 }
 
 export default function App() {
+  const appRoot = useRef<HTMLElement>(null);
+  const [language, setLanguage] = useState<GuiLanguage>(initialGuiLanguage);
+  useGuiLocalization(appRoot, language);
   const [seedInput, setSeedInput] = useState("42");
   const [arrivalRateInput, setArrivalRateInput] = useState("4.2");
   const [savedArrivalRate, setSavedArrivalRate] = useState(4.2);
@@ -122,7 +128,7 @@ export default function App() {
   );
   const [selectedDay, setSelectedDay] = useState(50);
   const visibleSelectedDay = Math.min(selectedDay, selectedConfig.horizonDays - 1);
-  const [visualization, setVisualization] = useState<"cfd" | "kanban">("cfd");
+  const [visualization, setVisualization] = useState<"cfd" | "kanban" | "backlog">("cfd");
   const [showInactiveWork, setShowInactiveWork] = useState(false);
   const [showFeatureCompletions, setShowFeatureCompletions] = useState(false);
   const [showFeatureHandoffs, setShowFeatureHandoffs] = useState(false);
@@ -158,7 +164,7 @@ export default function App() {
   };
   const swarmForm = swarmDraft ?? savedSwarm ?? workflowConfig.swarm ?? fallbackSwarm;
   const openGameView = () => {
-    if (visualization === "kanban" && !("dailyLog" in selected)) setVisualization("cfd");
+    if (visualization !== "cfd" && !("dailyLog" in selected)) setVisualization("cfd");
     setFocusMode(true);
   };
 
@@ -421,12 +427,18 @@ export default function App() {
   };
 
   return (
-    <main className={`cockpit${focusMode ? " focus-mode" : ""}`}>
+    <main ref={appRoot} className={`cockpit${focusMode ? " focus-mode" : ""}`}>
       <header className="topbar">
         <div>
           <p className="eyebrow">FlowLab · simulation cockpit</p>
           <h1>Product flow</h1>
         </div>
+        <label className="language-switcher" htmlFor="gui-language">Language
+          <select id="gui-language" value={language} onChange={(event) => setLanguage(event.target.value as GuiLanguage)}>
+            <option value="en">English</option>
+            <option value="de">Deutsch</option>
+          </select>
+        </label>
       </header>
 
       <div className="cockpit-workspace">
@@ -602,14 +614,17 @@ export default function App() {
           <div className={`visualization-tabs${focusMode ? " game-view-tabs" : ""}`} role="tablist" aria-label="Simulation visualizations">
             <button type="button" role="tab" aria-selected={visualization === "cfd"} className={visualization === "cfd" ? "active" : ""} onClick={() => setVisualization("cfd")}>CFD</button>
             <button type="button" role="tab" aria-selected={visualization === "kanban"} className={visualization === "kanban" ? "active" : ""} onClick={() => setVisualization("kanban")}>Kanban</button>
+            <button type="button" role="tab" aria-selected={visualization === "backlog"} className={visualization === "backlog" ? "active" : ""} onClick={() => setVisualization("backlog")}>Backlog</button>
             {!focusMode && <button type="button" className="game-view-button" onClick={openGameView}>Game view</button>}
           </div>
           {visualization === "cfd" ? (
             <CfdChart result={selected} selectedDay={visibleSelectedDay} onSelectDay={setSelectedDay} showInactiveWork={showInactiveWork} onShowInactiveWorkChange={setShowInactiveWork} showFeatureCompletions={showFeatureCompletions} onShowFeatureCompletionsChange={setShowFeatureCompletions} showFeatureHandoffs={showFeatureHandoffs} onShowFeatureHandoffsChange={setShowFeatureHandoffs} focusMode={focusMode} onExitFocusMode={() => setFocusMode(false)} />
-          ) : "dailyLog" in selected ? (
+          ) : visualization === "kanban" && "dailyLog" in selected ? (
             <KanbanBoard result={selected} selectedDay={visibleSelectedDay} onSelectDay={setSelectedDay} focusMode={focusMode} onExitFocusMode={() => setFocusMode(false)} />
+          ) : visualization === "backlog" && "dailyLog" in selected ? (
+            <FeatureBacklogView result={selected} selectedDay={visibleSelectedDay} onSelectDay={setSelectedDay} focusMode={focusMode} onExitFocusMode={() => setFocusMode(false)} />
           ) : (
-            <section className="kanban-empty"><p className="eyebrow">Item trace</p><h2>Kanban board</h2><p>Run one seed to inspect individual items. A mean CFD has no single set of cards.</p></section>
+            <section className="kanban-empty"><p className="eyebrow">Item trace</p><h2>{visualization === "backlog" ? "Backlog hierarchy" : "Kanban board"}</h2><p>Run one seed to inspect individual items. A mean CFD has no single set of cards.</p></section>
           )}
         </section>
 
