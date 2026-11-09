@@ -5,6 +5,7 @@ import { FeatureBacklogView } from "./FeatureBacklogView";
 import { initialGuiLanguage, useGuiLocalization } from "./i18n";
 import type { GuiLanguage } from "./i18n";
 import { KanbanBoard } from "./KanbanBoard";
+import { ProductView } from "./ProductView";
 import { runScenario } from "./sim/engine";
 import { initialFeatureBacklogFromSimulation, parseInitialFeatureBacklog } from "./sim/initialFeatureBacklog";
 import { runMeanScenario, validateMeanSeedCount } from "./sim/mean";
@@ -132,7 +133,8 @@ export default function App() {
   );
   const [selectedDay, setSelectedDay] = useState(50);
   const visibleSelectedDay = Math.min(selectedDay, selectedConfig.horizonDays - 1);
-  const [visualization, setVisualization] = useState<"cfd" | "kanban" | "backlog">("cfd");
+  const [visualization, setVisualization] = useState<"cfd" | "kanban" | "backlog" | "product">("cfd");
+  const [productImage, setProductImage] = useState<string>();
   const [showInactiveWork, setShowInactiveWork] = useState(false);
   const [showFeatureCompletions, setShowFeatureCompletions] = useState(false);
   const [showFeatureHandoffs, setShowFeatureHandoffs] = useState(false);
@@ -168,7 +170,7 @@ export default function App() {
   };
   const swarmForm = swarmDraft ?? savedSwarm ?? workflowConfig.swarm ?? fallbackSwarm;
   const openGameView = () => {
-    if (visualization !== "cfd" && !("dailyLog" in selected)) setVisualization("cfd");
+    if ((visualization === "kanban" || visualization === "backlog") && !("dailyLog" in selected)) setVisualization("cfd");
     setFocusMode(true);
   };
 
@@ -659,6 +661,7 @@ export default function App() {
             <button type="button" role="tab" aria-selected={visualization === "cfd"} className={visualization === "cfd" ? "active" : ""} onClick={() => setVisualization("cfd")}>CFD</button>
             <button type="button" role="tab" aria-selected={visualization === "kanban"} className={visualization === "kanban" ? "active" : ""} onClick={() => setVisualization("kanban")}>Kanban</button>
             <button type="button" role="tab" aria-selected={visualization === "backlog"} className={visualization === "backlog" ? "active" : ""} onClick={() => setVisualization("backlog")}>Backlog</button>
+            <button type="button" role="tab" aria-selected={visualization === "product"} className={visualization === "product" ? "active" : ""} onClick={() => setVisualization("product")}>Product</button>
             {!focusMode && <button type="button" className="game-view-button" onClick={openGameView}>Game view</button>}
           </div>
           {visualization === "cfd" ? (
@@ -667,6 +670,8 @@ export default function App() {
             <KanbanBoard result={selected} selectedDay={visibleSelectedDay} onSelectDay={setSelectedDay} focusMode={focusMode} onExitFocusMode={() => setFocusMode(false)} />
           ) : visualization === "backlog" && "dailyLog" in selected ? (
             <FeatureBacklogView result={selected} selectedDay={visibleSelectedDay} onSelectDay={setSelectedDay} focusMode={focusMode} onExitFocusMode={() => setFocusMode(false)} />
+          ) : visualization === "product" ? (
+            <ProductView projectName={projectName} image={productImage} onImageChange={setProductImage} focusMode={focusMode} onExitFocusMode={() => setFocusMode(false)} />
           ) : (
             <section className="kanban-empty"><p className="eyebrow">Item trace</p><h2>{visualization === "backlog" ? "Backlog hierarchy" : "Kanban board"}</h2><p>Run one seed to inspect individual items. A mean CFD has no single set of cards.</p></section>
           )}
