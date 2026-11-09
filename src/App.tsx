@@ -6,12 +6,13 @@ import { initialGuiLanguage, useGuiLocalization } from "./i18n";
 import type { GuiLanguage } from "./i18n";
 import { KanbanBoard } from "./KanbanBoard";
 import { runScenario } from "./sim/engine";
+import { initialFeatureBacklogFromSimulation, parseInitialFeatureBacklog } from "./sim/initialFeatureBacklog";
 import { runMeanScenario, validateMeanSeedCount } from "./sim/mean";
 import { baselineConfigForComparison, configFromProjectFile, createProjectFile, noPhaseInterventions, parseProjectFile, phaseInterventionsForEntry, phasePlanFromProject, phaseSettingsFor, projectPhasesForPlan } from "./sim/project";
 import type { PhaseInterventions, PhasePlanEntry } from "./sim/project";
 import { scenarios } from "./sim/scenarios";
 import { withSimulationSettings } from "./sim/settings";
-import type { CapacityIncident, FeatureBacklogConfig, FeatureFocusPolicy, InitialInventory, Metrics, OperatingAssumptions, ScenarioConfig, SwarmPolicy } from "./sim/types";
+import type { CapacityIncident, FeatureBacklogConfig, FeatureFocusPolicy, InitialFeatureBacklog, InitialInventory, Metrics, OperatingAssumptions, ScenarioConfig, SwarmPolicy } from "./sim/types";
 import { activeStages, withWorkflow } from "./sim/workflow";
 
 const metricLabels: Array<[keyof Metrics, string, string]> = [
@@ -60,6 +61,8 @@ export default function App() {
   const [savedFeatureBacklog, setSavedFeatureBacklog] = useState<FeatureBacklogConfig>(defaultFeatureBacklog);
   const [featureBacklogDraft, setFeatureBacklogDraft] = useState<FeatureBacklogConfig>(defaultFeatureBacklog);
   const [featureBacklogError, setFeatureBacklogError] = useState<string>();
+  const [savedInitialFeatureBacklog, setSavedInitialFeatureBacklog] = useState<InitialFeatureBacklog>();
+  const [initialFeatureBacklogError, setInitialFeatureBacklogError] = useState<string>();
   const [savedFeatureFocus, setSavedFeatureFocus] = useState<FeatureFocusPolicy | null>();
   const [featureFocusEnabled, setFeatureFocusEnabled] = useState(false);
   const [featureFocusStartDay, setFeatureFocusStartDay] = useState("0");
@@ -95,6 +98,7 @@ export default function App() {
   const [projectHeaderOverrides, setProjectHeaderOverrides] = useState<Partial<ScenarioConfig>>({});
   const [projectFileError, setProjectFileError] = useState<string>();
   const projectFileInput = useRef<HTMLInputElement>(null);
+  const initialFeatureBacklogFileInput = useRef<HTMLInputElement>(null);
   const seed = Number.isFinite(Number(seedInput)) ? Math.max(0, Math.floor(Number(seedInput))) : 42;
   const projectBaseConfig = useMemo(
     () => ({ ...scenarios.baseline, ...projectHeaderOverrides, projectPhases: undefined }),
@@ -102,8 +106,8 @@ export default function App() {
   );
   const workflowConfig = useMemo(() => withWorkflow(projectBaseConfig, workflow), [projectBaseConfig, workflow]);
   const customizedConfig = useMemo(
-    () => withSimulationSettings(workflowConfig, { arrivalRatePerDay: savedArrivalRate, initialInventory: inventoryForStages(savedInitialInventory, workflowConfig.workflow.stages), featureBacklog: savedFeatureBacklog, featureFocus: savedFeatureFocus, wipAssistanceEffectiveness: savedWipAssistanceEffectiveness, baseRates: savedRates, operatingAssumptions: savedOperatingAssumptions, wipLimits: savedWipLimits, incident: savedIncident, swarm: savedSwarm }),
-    [workflowConfig, savedArrivalRate, savedInitialInventory, savedFeatureBacklog, savedFeatureFocus, savedWipAssistanceEffectiveness, savedRates, savedOperatingAssumptions, savedWipLimits, savedIncident, savedSwarm],
+    () => withSimulationSettings(workflowConfig, { arrivalRatePerDay: savedArrivalRate, initialInventory: inventoryForStages(savedInitialInventory, workflowConfig.workflow.stages), featureBacklog: savedFeatureBacklog, initialFeatureBacklog: savedInitialFeatureBacklog ?? null, featureFocus: savedFeatureFocus, wipAssistanceEffectiveness: savedWipAssistanceEffectiveness, baseRates: savedRates, operatingAssumptions: savedOperatingAssumptions, wipLimits: savedWipLimits, incident: savedIncident, swarm: savedSwarm }),
+    [workflowConfig, savedArrivalRate, savedInitialInventory, savedFeatureBacklog, savedInitialFeatureBacklog, savedFeatureFocus, savedWipAssistanceEffectiveness, savedRates, savedOperatingAssumptions, savedWipLimits, savedIncident, savedSwarm],
   );
   const phasePlanHorizon = phasePlan.reduce((total, phase) => total + phase.durationDays, 0);
   const projectPhases = useMemo(
@@ -205,6 +209,8 @@ export default function App() {
       setSavedInitialInventory(config.initialInventory ?? (config.initialBacklog ? { [config.workflow.stages[0]]: config.initialBacklog } : {}));
       setSavedFeatureBacklog(config.featureBacklog ?? defaultFeatureBacklog);
       setFeatureBacklogDraft(config.featureBacklog ?? defaultFeatureBacklog);
+      setSavedInitialFeatureBacklog(config.initialFeatureBacklog);
+      setInitialFeatureBacklogError(undefined);
       setSavedRates(config.baseRates as Record<string, number>);
       setRateDraft({});
       setSavedOperatingAssumptions(config.operatingAssumptions ?? {});
@@ -363,6 +369,36 @@ export default function App() {
     } catch (error) {
       setFeatureBacklogError(error instanceof Error ? error.message : "Unable to save the feature-backed backlog.");
     }
+  };
+
+  const exportInitialFeatureBacklog = () => {
+    const singleRun = "features" in selected ? selected : runScenario(selectedConfig, seed);
+    const backlog = savedInitialFeatureBacklog ?? initialFeatureBacklogFromSimulation(singleRun);
+    const blob = new Blob([JSON.stringify(backlog, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${projectName.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "") || "flowlab"}-initial-feature-backlog.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const importInitialFeatureBacklog = async (file?: File) => {
+    if (!file) return;
+    try {
+      const backlog = parseInitialFeatureBacklog(await file.text());
+      setSavedInitialFeatureBacklog(backlog);
+      setInitialFeatureBacklogError(undefined);
+    } catch (error) {
+      setInitialFeatureBacklogError(error instanceof Error ? error.message : "Unable to import the initial feature backlog.");
+    } finally {
+      if (initialFeatureBacklogFileInput.current) initialFeatureBacklogFileInput.current.value = "";
+    }
+  };
+
+  const clearInitialFeatureBacklog = () => {
+    setSavedInitialFeatureBacklog(undefined);
+    setInitialFeatureBacklogError(undefined);
   };
 
   const saveFeatureFocus = () => {
@@ -539,13 +575,21 @@ export default function App() {
             <summary>Initial feature backlog</summary>
             <div className="feature-backlog-settings">
               <p>Feature-backed backlog</p>
-              <label>Initial features<input type="number" min="0" step="1" value={featureBacklogDraft.featureCount} onChange={(event) => setFeatureBacklogDraft((draft) => ({ ...draft, featureCount: Number(event.target.value) }))} /></label>
-              <label>PBIs / feature (min)<input type="number" min="1" step="1" value={featureBacklogDraft.minPbisPerFeature} onChange={(event) => setFeatureBacklogDraft((draft) => ({ ...draft, minPbisPerFeature: Number(event.target.value) }))} /></label>
-              <label>PBIs / feature (max)<input type="number" min="1" step="1" value={featureBacklogDraft.maxPbisPerFeature} onChange={(event) => setFeatureBacklogDraft((draft) => ({ ...draft, maxPbisPerFeature: Number(event.target.value) }))} /></label>
+              <p>Import a JSON file to preserve each initial Feature and PBI ID with its short title. Generated titles start empty.</p>
+              <div className="initial-feature-backlog-actions">
+                <button type="button" onClick={() => initialFeatureBacklogFileInput.current?.click()}>Import initial backlog</button>
+                <button type="button" onClick={exportInitialFeatureBacklog}>Export initial backlog</button>
+              </div>
+              <input ref={initialFeatureBacklogFileInput} className="visually-hidden" type="file" accept="application/json,.json" onChange={(event) => void importInitialFeatureBacklog(event.target.files?.[0])} />
+              {savedInitialFeatureBacklog && <div className="imported-feature-backlog-summary"><span>Imported initial backlog</span><strong>{savedInitialFeatureBacklog.features.length} Features · {savedInitialFeatureBacklog.features.reduce((total, feature) => total + feature.pbis.length, 0)} PBIs</strong><button type="button" className="secondary-button" onClick={clearInitialFeatureBacklog}>Use generated backlog</button></div>}
+              <label>Initial features<input type="number" min="0" step="1" disabled={Boolean(savedInitialFeatureBacklog)} value={featureBacklogDraft.featureCount} onChange={(event) => setFeatureBacklogDraft((draft) => ({ ...draft, featureCount: Number(event.target.value) }))} /></label>
+              <label>PBIs / feature (min)<input type="number" min="1" step="1" disabled={Boolean(savedInitialFeatureBacklog)} value={featureBacklogDraft.minPbisPerFeature} onChange={(event) => setFeatureBacklogDraft((draft) => ({ ...draft, minPbisPerFeature: Number(event.target.value) }))} /></label>
+              <label>PBIs / feature (max)<input type="number" min="1" step="1" disabled={Boolean(savedInitialFeatureBacklog)} value={featureBacklogDraft.maxPbisPerFeature} onChange={(event) => setFeatureBacklogDraft((draft) => ({ ...draft, maxPbisPerFeature: Number(event.target.value) }))} /></label>
               <label>Base Bug effort<input type="number" min="0.01" step="0.1" value={featureBacklogDraft.baseBugEffort} onChange={(event) => setFeatureBacklogDraft((draft) => ({ ...draft, baseBugEffort: Number(event.target.value) }))} /></label>
               <label>Feedback-delay factor<input type="number" min="0" step="0.05" value={featureBacklogDraft.feedbackDelayEffortFactor} onChange={(event) => setFeatureBacklogDraft((draft) => ({ ...draft, feedbackDelayEffortFactor: Number(event.target.value) }))} /></label>
               <button type="button" onClick={saveFeatureBacklog}>Save feature backlog</button>
               {featureBacklogError && <p className="settings-error" role="alert">{featureBacklogError}</p>}
+              {initialFeatureBacklogError && <p className="settings-error" role="alert">{initialFeatureBacklogError}</p>}
             </div>
           </details>
 

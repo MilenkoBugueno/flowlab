@@ -98,7 +98,8 @@ export function FeatureBacklogView({ result, selectedDay, onSelectDay, focusMode
               <span className="feature-tree-header">
                 <span>
                   <span className="eyebrow">Feature</span>
-                  <strong>{feature.title}</strong>
+                  <strong>{feature.title || feature.id}</strong>
+                  {feature.title && <small className="feature-item-id">{feature.id}</small>}
                 </span>
                 <span className="feature-tree-meta">
                   <strong>Rank {feature.ranking}</strong>
@@ -111,8 +112,7 @@ export function FeatureBacklogView({ result, selectedDay, onSelectDay, focusMode
               {pbis.map(({ item, state }) => (
                 <li key={item.id} role="treeitem" aria-level={2}>
                   <article className="feature-tree-node pbi-node">
-                    <div className="feature-tree-node-heading"><span className="tree-item-type">PBI</span><strong>{item.id}</strong></div>
-                    <p>{item.title}</p>
+                    <div className="feature-tree-node-heading"><span className="tree-item-type">PBI</span><strong>{item.title || item.id}</strong>{item.title && <small className="tree-item-id">{item.id}</small>}</div>
                     <small>{stateSummary(state)}</small>
                   </article>
                 </li>
@@ -120,8 +120,7 @@ export function FeatureBacklogView({ result, selectedDay, onSelectDay, focusMode
               {raisedBugs.map(({ item, state }) => (
                 <li key={item.id} role="treeitem" aria-level={2}>
                   <article className="feature-tree-node bug-node">
-                    <div className="feature-tree-node-heading"><span className="tree-item-type bug">Bug</span><strong>{item.id}</strong></div>
-                    <p>{item.title}</p>
+                    <div className="feature-tree-node-heading"><span className="tree-item-type bug">Bug</span><strong>{item.title || item.id}</strong>{item.title && <small className="tree-item-id">{item.id}</small>}</div>
                     <small>{stateSummary(state)}{item.originatingPbiId ? ` · feedback for ${item.originatingPbiId}` : ""}</small>
                   </article>
                 </li>

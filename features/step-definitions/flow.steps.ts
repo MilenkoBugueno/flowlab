@@ -1141,10 +1141,10 @@ When("I inspect the Kanban board before the first simulated working day", functi
   this.result = runScenario(this.config, 42);
 });
 
-Then("every seeded item has a unique ID and a non-empty title", function (this: FlowLabWorld) {
+Then("every seeded item has a unique ID and an empty short title", function (this: FlowLabWorld) {
   const seeded = resultFor(this).items.filter((item) => item.initial);
   assert.equal(new Set(seeded.map((item) => item.id)).size, seeded.length);
-  assert.ok(seeded.every((item) => item.title.trim().length > 0));
+  assert.ok(seeded.every((item) => item.title === ""));
 });
 
 Then("each seeded item identifies whether it is a PBI or a bug", function (this: FlowLabWorld) {
@@ -1261,8 +1261,8 @@ Then("every initial backlog item has a unique ID", function (this: FlowLabWorld)
   assert.equal(new Set(items.map((item) => item.id)).size, items.length);
 });
 
-Then("every initial backlog item has a non-empty title", function (this: FlowLabWorld) {
-  assert.ok(resultFor(this).items.filter((item) => item.initial).every((item) => item.title.trim().length > 0));
+Then("every initial backlog item has an empty short title", function (this: FlowLabWorld) {
+  assert.ok(resultFor(this).items.filter((item) => item.initial).every((item) => item.title === ""));
 });
 
 Then("every initial backlog item identifies whether it is a PBI or a bug", function (this: FlowLabWorld) {
@@ -1296,11 +1296,11 @@ Then("every item created on or before day {int} appears in exactly one workflow 
   assert.equal(new Set(visible.map((item) => item.id)).size, visible.length);
 });
 
-Then("each card shows its ID, title, stage, active status, progress, start date, and completion date", function (this: FlowLabWorld) {
+Then("each card has its ID, short-title field, stage, active status, progress, start date, and completion date", function (this: FlowLabWorld) {
   const visible = resultFor(this).items.filter((item) => itemStateAtDay(item, 0));
   assert.ok(visible.every((item) => {
     const state = itemStateAtDay(item, 0);
-    return item.id.length > 0 && item.title.length > 0 && state !== undefined && typeof state.stage === "string" && typeof state.active === "boolean" && Number.isFinite(state.progressPercent);
+    return item.id.length > 0 && typeof item.title === "string" && state !== undefined && typeof state.stage === "string" && typeof state.active === "boolean" && Number.isFinite(state.progressPercent);
   }));
 });
 
@@ -1522,8 +1522,8 @@ Then("every seeded feature contains between {int} and {int} PBIs", function (thi
   assert.ok(resultFor(this).features.every((feature) => feature.pbiIds.length >= minimum && feature.pbiIds.length <= maximum));
 });
 
-Then("every seeded PBI has a feature ID and feature title", function (this: FlowLabWorld) {
-  assert.ok(resultFor(this).items.filter((item) => item.featureId).every((item) => item.type === "PBI" && item.featureTitle));
+Then("every seeded PBI has a feature ID and an empty short title", function (this: FlowLabWorld) {
+  assert.ok(resultFor(this).items.filter((item) => item.featureId).every((item) => item.type === "PBI" && item.featureTitle !== undefined && item.title === ""));
 });
 
 Then("the same seed produces the same features, PBI counts, IDs, and titles", function (this: FlowLabWorld) {
@@ -1684,9 +1684,9 @@ Then("exactly one Bug is created for that PBI on day {int}", function (this: Flo
   assert.equal(bugs[0].arrivedAt, day);
 });
 
-Then("the Bug has its own unique ID and title", function (this: FlowLabWorld) {
+Then("the Bug has its own unique ID and an empty short title", function (this: FlowLabWorld) {
   const bug = resultFor(this).items.find((item) => item.originatingPbiId);
-  assert.ok(bug && bug.id !== bug.originatingPbiId && bug.title.length > 0);
+  assert.ok(bug && bug.id !== bug.originatingPbiId && bug.title === "");
 });
 
 Then("the Bug retains the originating PBI ID and feature ID", function (this: FlowLabWorld) {

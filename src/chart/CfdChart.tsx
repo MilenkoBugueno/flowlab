@@ -93,7 +93,7 @@ export function CfdChart({ result, selectedDay, onSelectDay, showInactiveWork, o
         .reduce((byDay, feature) => {
           const day = feature.handoffAt as number;
           const titles = byDay.get(day) ?? [];
-          titles.push(feature.title);
+          titles.push(feature.title || feature.id);
           byDay.set(day, titles);
           return byDay;
         }, new Map<number, string[]>()),

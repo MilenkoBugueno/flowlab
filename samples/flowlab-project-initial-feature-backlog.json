@@ -1,0 +1,265 @@
+{
+  "formatVersion": 1,
+  "features": [
+    {
+      "id": "FEATURE-001",
+      "shortTitle": "Kern-Leistungsmessung",
+      "pbis": [
+        {
+          "id": "PBI-001",
+          "shortTitle": "Grenzfälle des Messbereichs"
+        },
+        {
+          "id": "PBI-002",
+          "shortTitle": "Verfeinerung der Stromwandler-Skalierung"
+        },
+        {
+          "id": "PBI-003",
+          "shortTitle": "Toleranzabstimmung des Phasenwinkels"
+        },
+        {
+          "id": "PBI-004",
+          "shortTitle": "Rundung der Leistungsberechnung"
+        },
+        {
+          "id": "PBI-005",
+          "shortTitle": "Vorzeichenbehandlung der Blindleistung"
+        },
+        {
+          "id": "PBI-006",
+          "shortTitle": "Überlaufprüfung der Energiezähler"
+        },
+        {
+          "id": "PBI-007",
+          "shortTitle": "Kalibrierungs-Abnahmenachweise"
+        }
+      ]
+    },
+    {
+      "id": "FEATURE-002",
+      "shortTitle": "Abtastung und Signalverarbeitung",
+      "pbis": [
+        {
+          "id": "PBI-008",
+          "shortTitle": "Verringerung des Abtast-Jitters"
+        },
+        {
+          "id": "PBI-009",
+          "shortTitle": "Abstimmung der Filterkoeffizienten"
+        },
+        {
+          "id": "PBI-010",
+          "shortTitle": "Wiederherstellung der Phasensynchronisierung"
+        }
+      ]
+    },
+    {
+      "id": "FEATURE-003",
+      "shortTitle": "Industrielle Kommunikation",
+      "pbis": [
+        {
+          "id": "PBI-011",
+          "shortTitle": "Modbus-Register-Feinschliff"
+        },
+        {
+          "id": "PBI-012",
+          "shortTitle": "Wiederherstellung der Modbus-TCP-Verbindung"
+        },
+        {
+          "id": "PBI-013",
+          "shortTitle": "Validierungsmeldungen für Adressen"
+        }
+      ]
+    },
+    {
+      "id": "FEATURE-004",
+      "shortTitle": "Protokollintegration",
+      "pbis": [
+        {
+          "id": "PBI-014",
+          "shortTitle": "Feinschliff des PROFINET-Geräteprofils"
+        },
+        {
+          "id": "PBI-015",
+          "shortTitle": "EtherNet/IP-Interoperabilitätskorrekturen"
+        },
+        {
+          "id": "PBI-016",
+          "shortTitle": "Bereinigung des OPC-UA-Namensraums"
+        },
+        {
+          "id": "PBI-017",
+          "shortTitle": "Protokoll-Diagnosemeldungen"
+        },
+        {
+          "id": "PBI-018",
+          "shortTitle": "Härtung der Zertifikatsbehandlung"
+        },
+        {
+          "id": "PBI-019",
+          "shortTitle": "Fallback-Verhalten der Zeitsynchronisierung"
+        }
+      ]
+    },
+    {
+      "id": "FEATURE-005",
+      "shortTitle": "Lokale Anzeige und Bedienung",
+      "pbis": [
+        {
+          "id": "PBI-020",
+          "shortTitle": "Feinschliff des Dashboard-Layouts"
+        },
+        {
+          "id": "PBI-021",
+          "shortTitle": "Lesbarkeit der Phasenanzeige"
+        },
+        {
+          "id": "PBI-022",
+          "shortTitle": "Endzustände der Alarmanzeige"
+        }
+      ]
+    },
+    {
+      "id": "FEATURE-006",
+      "shortTitle": "Alarme und Ausgänge",
+      "pbis": [
+        {
+          "id": "PBI-023",
+          "shortTitle": "Abstimmung der Schwellwert-Hysterese"
+        },
+        {
+          "id": "PBI-024",
+          "shortTitle": "Grenzfälle der Bedarfsalarme"
+        },
+        {
+          "id": "PBI-025",
+          "shortTitle": "Fail-Safe-Verhalten der Relais"
+        },
+        {
+          "id": "PBI-026",
+          "shortTitle": "Ablauf der Alarmquittierung"
+        }
+      ]
+    },
+    {
+      "id": "FEATURE-007",
+      "shortTitle": "Datenprotokollierung",
+      "pbis": [
+        {
+          "id": "PBI-027",
+          "shortTitle": "Voreinstellungen für Protokollintervalle"
+        },
+        {
+          "id": "PBI-028",
+          "shortTitle": "Filterung des Ereignisprotokolls"
+        },
+        {
+          "id": "PBI-029",
+          "shortTitle": "Wiederherstellung des SD-Exports"
+        },
+        {
+          "id": "PBI-030",
+          "shortTitle": "Behandlung von Aufbewahrungslimits"
+        },
+        {
+          "id": "PBI-031",
+          "shortTitle": "Prüfung der Zeitstempelgenauigkeit"
+        },
+        {
+          "id": "PBI-032",
+          "shortTitle": "Konsistenz der CSV-Spalten"
+        },
+        {
+          "id": "PBI-033",
+          "shortTitle": "Zustandsanzeigen der Protokollierung"
+        }
+      ]
+    },
+    {
+      "id": "FEATURE-008",
+      "shortTitle": "Netzqualitätsanalyse",
+      "pbis": [
+        {
+          "id": "PBI-034",
+          "shortTitle": "Schwellenwerte für Spannungseinbrüche"
+        },
+        {
+          "id": "PBI-035",
+          "shortTitle": "Schwellenwerte für Spannungsüberhöhungen"
+        },
+        {
+          "id": "PBI-036",
+          "shortTitle": "Verfeinerung der Oberschwingungsanzeige"
+        },
+        {
+          "id": "PBI-037",
+          "shortTitle": "Prüfung der Unsymmetrieberechnung"
+        },
+        {
+          "id": "PBI-038",
+          "shortTitle": "Formatierung des THD-Berichts"
+        }
+      ]
+    },
+    {
+      "id": "FEATURE-009",
+      "shortTitle": "Sicherheit und Wartung",
+      "pbis": [
+        {
+          "id": "PBI-039",
+          "shortTitle": "Prüfung der Rollenberechtigungen"
+        },
+        {
+          "id": "PBI-040",
+          "shortTitle": "Wiederherstellung von Firmware-Updates"
+        },
+        {
+          "id": "PBI-041",
+          "shortTitle": "Validierung von Backup und Wiederherstellung"
+        },
+        {
+          "id": "PBI-042",
+          "shortTitle": "Details der Selbsttestergebnisse"
+        },
+        {
+          "id": "PBI-043",
+          "shortTitle": "Vollständigkeit des Audit-Trails"
+        },
+        {
+          "id": "PBI-044",
+          "shortTitle": "Hinweise zur Service-Diagnose"
+        }
+      ]
+    },
+    {
+      "id": "FEATURE-010",
+      "shortTitle": "Inbetriebnahme und Berichterstattung",
+      "pbis": [
+        {
+          "id": "PBI-045",
+          "shortTitle": "Texte des Inbetriebnahmeassistenten"
+        },
+        {
+          "id": "PBI-046",
+          "shortTitle": "Grenzfälle der Verdrahtungsprüfung"
+        },
+        {
+          "id": "PBI-047",
+          "shortTitle": "Anleitung zur Stromwandlerpolarität"
+        },
+        {
+          "id": "PBI-048",
+          "shortTitle": "Validierung der Phasenfolge"
+        },
+        {
+          "id": "PBI-049",
+          "shortTitle": "Layout des Installationsberichts"
+        },
+        {
+          "id": "PBI-050",
+          "shortTitle": "Prüfung der Abnahmecheckliste"
+        }
+      ]
+    }
+  ]
+}

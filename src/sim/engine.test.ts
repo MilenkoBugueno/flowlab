@@ -359,9 +359,9 @@ describe("FlowLab simulation engine", () => {
       serviceEffort: { Development: { min: 10, max: 10 }, Test: { min: 10, max: 10 } },
     }, 42);
     expect(result.items.map((item) => ({ id: item.id, title: item.title, type: item.type, initial: item.initial }))).toEqual([
-      { id: "PBI-001", title: "Product backlog item 1", type: "PBI", initial: true },
-      { id: "PBI-002", title: "Product backlog item 2", type: "PBI", initial: true },
-      { id: "Bug-003", title: "Bug 3", type: "Bug", initial: true },
+      { id: "PBI-001", title: "", type: "PBI", initial: true },
+      { id: "PBI-002", title: "", type: "PBI", initial: true },
+      { id: "Bug-003", title: "", type: "Bug", initial: true },
     ]);
     expect(result.snapshots[0].arrivals).toBe(0);
     expect(result.dailyLog[0].movements.find((movement) => movement.from === "External" && movement.to === "Backlog")?.count).toBe(0);
@@ -486,9 +486,38 @@ describe("FlowLab simulation engine", () => {
     const first = runScenario(config, 42);
     const second = runScenario(config, 42);
     expect(first.features).toHaveLength(2);
-    expect(first.features.every((feature) => feature.pbiIds.length === 3 && feature.title.length > 0)).toBe(true);
+    expect(first.features.every((feature) => feature.pbiIds.length === 3 && feature.title === "")).toBe(true);
     expect(first.items.filter((item) => item.featureId).every((item) => item.type === "PBI" && item.featureTitle !== undefined)).toBe(true);
     expect(first.features).toEqual(second.features);
+  });
+
+  it("uses imported initial Feature and PBI IDs and short titles instead of generating them", () => {
+    const result = runScenario({
+      ...scenarios.baseline,
+      horizonDays: 1,
+      warmupDays: 0,
+      arrivalRatePerDay: 0,
+      batchDays: [],
+      batchSize: 0,
+      initialInventory: {},
+      featureBacklog: { featureCount: 10, minPbisPerFeature: 3, maxPbisPerFeature: 7, baseBugEffort: 1, feedbackDelayEffortFactor: 0 },
+      initialFeatureBacklog: {
+        formatVersion: 1,
+        features: [
+          { id: "FEATURE-CHECKOUT", shortTitle: "Checkout", pbis: [{ id: "PBI-CHECKOUT-API", shortTitle: "Checkout API" }] },
+          { id: "FEATURE-SEARCH", shortTitle: "", pbis: [{ id: "PBI-SEARCH", shortTitle: "" }] },
+        ],
+      },
+    }, 42);
+
+    expect(result.features.map(({ id, title, ranking, pbiIds }) => ({ id, title, ranking, pbiIds }))).toEqual([
+      { id: "FEATURE-CHECKOUT", title: "Checkout", ranking: 1, pbiIds: ["PBI-CHECKOUT-API"] },
+      { id: "FEATURE-SEARCH", title: "", ranking: 2, pbiIds: ["PBI-SEARCH"] },
+    ]);
+    expect(result.items.map(({ id, title, featureId }) => ({ id, title, featureId }))).toEqual([
+      { id: "PBI-CHECKOUT-API", title: "Checkout API", featureId: "FEATURE-CHECKOUT" },
+      { id: "PBI-SEARCH", title: "", featureId: "FEATURE-SEARCH" },
+    ]);
   });
 
   it("assigns initial backlog PBIs seeded random queue positions", () => {

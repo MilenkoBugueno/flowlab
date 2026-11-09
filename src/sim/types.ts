@@ -47,6 +47,21 @@ export interface FeatureBacklogConfig {
   feedbackDelayEffortFactor: number;
 }
 
+/** A portable definition of the Features and PBIs available on simulation day 0. */
+export interface InitialFeatureBacklogItem {
+  id: string;
+  shortTitle: string;
+}
+
+export interface InitialFeatureBacklogFeature extends InitialFeatureBacklogItem {
+  pbis: InitialFeatureBacklogItem[];
+}
+
+export interface InitialFeatureBacklog {
+  formatVersion: 1;
+  features: InitialFeatureBacklogFeature[];
+}
+
 export interface FeatureFocusPolicy {
   /**
    * First simulated day on which Swarming may borrow spare capacity.
@@ -100,6 +115,8 @@ export interface ScenarioConfig {
   initialBacklog?: InitialBacklog;
   initialInventory?: InitialInventory;
   featureBacklog?: FeatureBacklogConfig;
+  /** Imported Feature/PBI definitions. When present, this replaces generated Features. */
+  initialFeatureBacklog?: InitialFeatureBacklog;
   featureFocus?: FeatureFocusPolicy;
   batchDays: number[];
   batchSize: number;

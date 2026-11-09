@@ -1,4 +1,5 @@
-import type { ActiveStage, CapacityIncident, FeatureBacklogConfig, FeatureFocusPolicy, InitialBacklog, InitialInventory, OperatingAssumptions, ScenarioConfig, Stage, SwarmPolicy } from "./types";
+import type { ActiveStage, CapacityIncident, FeatureBacklogConfig, FeatureFocusPolicy, InitialBacklog, InitialFeatureBacklog, InitialInventory, OperatingAssumptions, ScenarioConfig, Stage, SwarmPolicy } from "./types";
+import { validateInitialFeatureBacklog } from "./initialFeatureBacklog";
 import { activeStages } from "./workflow";
 
 function assertPositiveRate(rate: number, label: string) {
@@ -154,6 +155,7 @@ export interface SimulationSettings {
   initialBacklog?: InitialBacklog;
   initialInventory?: InitialInventory;
   featureBacklog?: FeatureBacklogConfig;
+  initialFeatureBacklog?: InitialFeatureBacklog | null;
   featureFocus?: FeatureFocusPolicy | null;
   backlogRanking?: boolean;
   wipLimits?: Partial<Record<Stage, number>>;
@@ -177,6 +179,11 @@ export function withSimulationSettings(config: ScenarioConfig, settings: Simulat
   const featureBacklog = settings.featureBacklog === undefined
     ? (withArrival.featureBacklog ?? { featureCount: 0, minPbisPerFeature: 5, maxPbisPerFeature: 10, baseBugEffort: 1, feedbackDelayEffortFactor: 0.1 })
     : validateFeatureBacklog(settings.featureBacklog);
+  const initialFeatureBacklog = settings.initialFeatureBacklog === undefined
+    ? withArrival.initialFeatureBacklog
+    : settings.initialFeatureBacklog === null
+      ? undefined
+      : validateInitialFeatureBacklog(settings.initialFeatureBacklog);
   const featureFocus = settings.featureFocus === undefined
     ? withArrival.featureFocus
     : settings.featureFocus === null
@@ -199,5 +206,5 @@ export function withSimulationSettings(config: ScenarioConfig, settings: Simulat
     : withOperating.incident;
   const swarm = settings.swarm ?? withOperating.swarm;
   if (swarm && active.length >= 2) validateSwarm(withOperating, swarm);
-  return { ...withOperating, initialBacklog, initialInventory, featureBacklog, featureFocus, backlogRanking, wipLimits, wipAssistanceEffectiveness, incident, swarm: active.length >= 2 ? swarm : undefined };
+  return { ...withOperating, initialBacklog, initialInventory, featureBacklog, initialFeatureBacklog, featureFocus, backlogRanking, wipLimits, wipAssistanceEffectiveness, incident, swarm: active.length >= 2 ? swarm : undefined };
 }

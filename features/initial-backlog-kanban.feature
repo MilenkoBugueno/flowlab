@@ -24,7 +24,7 @@ Feature: Initial backlog and simulated Kanban board
   Scenario: Seeded items retain their type and selected starting stage
     Given an initial inventory of 2 PBIs in Backlog, 1 bug in Development, and 1 PBI in Test
     When I inspect the Kanban board before the first simulated working day
-    Then every seeded item has a unique ID and a non-empty title
+    Then every seeded item has a unique ID and an empty short title
     And each seeded item identifies whether it is a PBI or a bug
     And each seeded item appears in its configured starting stage
     And each seeded item is initially inactive with 0 percent simulated progress
@@ -60,7 +60,7 @@ Feature: Initial backlog and simulated Kanban board
     Given a simulation with an initial backlog of 2 PBIs and 1 bug
     When I simulate with seed 42
     Then every initial backlog item has a unique ID
-    And every initial backlog item has a non-empty title
+    And every initial backlog item has an empty short title
     And every initial backlog item identifies whether it is a PBI or a bug
     And the same seed produces the same initial item IDs, titles, and types
 
@@ -74,7 +74,7 @@ Feature: Initial backlog and simulated Kanban board
     Given a simulation with an initial backlog of 4 PBIs and 2 bugs
     When I inspect the Kanban board on day 0
     Then every item created on or before day 0 appears in exactly one workflow stage
-    And each card shows its ID, title, stage, active status, progress, start date, and completion date
+    And each card has its ID, short-title field, stage, active status, progress, start date, and completion date
     And the number of cards in each stage matches the CFD state for that day
 
   Scenario: Items are pulled and worked according to configured capacity and concurrency

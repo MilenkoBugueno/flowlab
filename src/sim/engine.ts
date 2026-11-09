@@ -113,6 +113,7 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
   const positionRandom = createSeededRandom(deriveSeed(seed, 0x85ebca6b));
   const items: WorkItem[] = [];
   const features: Feature[] = [];
+  const itemIds = new Set<string>();
   const events: FlowEvent[] = [];
   const snapshots: DailySnapshot[] = [];
   const dailyLog: DailyLogEntry[] = [];
@@ -137,6 +138,7 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
     initialStage = entryStage,
     options: {
       title?: string;
+      id?: string;
       plannedEffortOverrides?: Partial<Record<ActiveStage, number>>;
       featureId?: string;
       featureTitle?: string;
@@ -145,7 +147,14 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
       feedbackDelayDays?: number;
     } = {},
   ): WorkItem => {
-    const ordinal = ++itemNumber;
+    let ordinal = ++itemNumber;
+    let id = options.id ?? `${type}-${String(ordinal).padStart(3, "0")}`;
+    while (!options.id && itemIds.has(id)) {
+      ordinal = ++itemNumber;
+      id = `${type}-${String(ordinal).padStart(3, "0")}`;
+    }
+    if (itemIds.has(id)) throw new Error(`Work item ID ${id} is duplicated.`);
+    itemIds.add(id);
     const initialStageIndex = stages.indexOf(initialStage);
     const plannedStages = active.filter((stage) => stages.indexOf(stage) >= initialStageIndex);
     const plannedEffort = Object.fromEntries(plannedStages.map((stage) => {
@@ -153,10 +162,9 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
       return [stage, options.plannedEffortOverrides?.[stage] ?? between(range.min, range.max, effortRandom)];
     }));
     const totalEffort = Object.values(plannedEffort).reduce((total, effort) => total + effort, 0);
-    const typeLabel = type === "PBI" ? "Product backlog item" : "Bug";
     return {
-      id: `${type}-${String(ordinal).padStart(3, "0")}`,
-      title: options.title ?? `${typeLabel} ${ordinal}`,
+      id,
+      title: options.title ?? "",
       type,
       initial,
       arrivedAt: day,
@@ -267,7 +275,7 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
     const { delayDays: delay, effort: fixEffort } = feedbackBugEffortFor(featureBacklog.baseBugEffort, featureBacklog.feedbackDelayEffortFactor, pbi.developedAt ?? day, day);
     const plannedEffortOverrides = developmentStage ? { [developmentStage]: fixEffort } : {};
     const bug = createItem(day, "Bug", false, entryStage, {
-      title: `Fix ${pbi.id}`,
+      title: "",
       plannedEffortOverrides,
       featureId: pbi.featureId,
       featureTitle: pbi.featureTitle,
@@ -432,15 +440,27 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
     }
   };
 
-  for (let index = 0; index < featureBacklog.featureCount; index += 1) {
-    const ordinal = ++featureNumber;
-    const feature: Feature = { id: `FEATURE-${String(ordinal).padStart(3, "0")}`, title: `Feature ${String(ordinal).padStart(3, "0")}`, ranking: ordinal, pbiIds: [], bugIds: [] };
-    features.push(feature);
-    const pbiCount = featureBacklog.minPbisPerFeature + Math.floor(featureRandom.next() * (featureBacklog.maxPbisPerFeature - featureBacklog.minPbisPerFeature + 1));
-    for (let pbiIndex = 0; pbiIndex < pbiCount; pbiIndex += 1) {
-      const pbi = createItem(0, "PBI", true, entryStage, { title: `${feature.title} · PBI ${pbiIndex + 1}`, featureId: feature.id, featureTitle: feature.title, ranking: feature.ranking });
-      items.push(pbi);
-      feature.pbiIds.push(pbi.id);
+  if (config.initialFeatureBacklog) {
+    config.initialFeatureBacklog.features.forEach((definition, index) => {
+      const feature: Feature = { id: definition.id, title: definition.shortTitle, ranking: index + 1, pbiIds: [], bugIds: [] };
+      features.push(feature);
+      definition.pbis.forEach((pbiDefinition) => {
+        const pbi = createItem(0, "PBI", true, entryStage, { id: pbiDefinition.id, title: pbiDefinition.shortTitle, featureId: feature.id, featureTitle: feature.title, ranking: feature.ranking });
+        items.push(pbi);
+        feature.pbiIds.push(pbi.id);
+      });
+    });
+  } else {
+    for (let index = 0; index < featureBacklog.featureCount; index += 1) {
+      const ordinal = ++featureNumber;
+      const feature: Feature = { id: `FEATURE-${String(ordinal).padStart(3, "0")}`, title: "", ranking: ordinal, pbiIds: [], bugIds: [] };
+      features.push(feature);
+      const pbiCount = featureBacklog.minPbisPerFeature + Math.floor(featureRandom.next() * (featureBacklog.maxPbisPerFeature - featureBacklog.minPbisPerFeature + 1));
+      for (let pbiIndex = 0; pbiIndex < pbiCount; pbiIndex += 1) {
+        const pbi = createItem(0, "PBI", true, entryStage, { featureId: feature.id, featureTitle: feature.title, ranking: feature.ranking });
+        items.push(pbi);
+        feature.pbiIds.push(pbi.id);
+      }
     }
   }
 
@@ -458,7 +478,7 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
       day,
       seed,
       movements: emptyMovements(stages),
-      featureFocus: featureFocus && { id: featureFocus.id, title: featureFocus.title },
+      featureFocus: featureFocus && { id: featureFocus.id, title: featureFocus.title || featureFocus.id },
       projectPhase: phase && { id: phase.id, label: phase.label },
     });
     feedbackArrivals = 0;
@@ -542,7 +562,7 @@ export function runScenario(config: ScenarioConfig, seed = 42): SimulationResult
       externalBacklog: 0,
       capacityAssistance,
       operatingCapacity,
-      featureFocus: featureFocus && { id: featureFocus.id, title: featureFocus.title },
+      featureFocus: featureFocus && { id: featureFocus.id, title: featureFocus.title || featureFocus.id },
       projectPhase: phase && { id: phase.id, label: phase.label },
     });
   }

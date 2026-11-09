@@ -27,6 +27,6 @@ export function layoutFeatureCompletionMarkers(
       const availableLane = lastXInLane.findIndex((lastX) => markerX - lastX >= minimumHorizontalGap);
       const lane = availableLane === -1 ? lastXInLane.length : availableLane;
       lastXInLane[lane] = markerX;
-      return { id: feature.id, title: feature.title, day, lane };
+      return { id: feature.id, title: feature.title || feature.id, day, lane };
     });
 }

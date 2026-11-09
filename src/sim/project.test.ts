@@ -166,6 +166,19 @@ describe("project files", () => {
     ]);
   });
 
+  it("round-trips an imported initial Feature backlog with the project header", () => {
+    const source = {
+      ...projectConfig(),
+      initialFeatureBacklog: {
+        formatVersion: 1 as const,
+        features: [{ id: "FEATURE-001", shortTitle: "", pbis: [{ id: "PBI-001", shortTitle: "" }] }],
+      },
+    };
+    const loaded = parseProjectFile(JSON.stringify(createProjectFile(source, 42)));
+
+    expect(loaded.config.initialFeatureBacklog).toEqual(source.initialFeatureBacklog);
+  });
+
   it("derives all enabled interventions when a mixed phase is reloaded", () => {
     const source = {
       ...scenarios.baseline,

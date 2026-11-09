@@ -158,12 +158,12 @@ export function KanbanBoard({ result, selectedDay, onSelectDay, focusMode = fals
                   const activeToday = wasProcessedOnDay(item, selectedDay);
                   return <article className={`kanban-card ${activeToday ? "active" : "inactive"}`} key={item.id}>
                     <div className="kanban-card-heading"><span className={`item-type ${item.type.toLowerCase()}`}>{item.type}</span><strong>{item.id}</strong>{!activeToday && <span className="inactive-marker">Inactive</span>}</div>
-                    <p>{item.title}</p>
+                    {item.title && <p>{item.title}</p>}
                     <dl>
                       <div><dt>Stage</dt><dd>{state.stage}</dd></div>
                       <div><dt>Active today</dt><dd>{activeToday ? "Yes" : "No"}</dd></div>
                       <div><dt>Progress</dt><dd>{state.progressPercent.toFixed(0)}%</dd></div>
-                      {item.featureId && <div><dt>Feature</dt><dd>{item.featureTitle ?? item.featureId}</dd></div>}
+                      {item.featureId && <div><dt>Feature</dt><dd>{item.featureTitle || item.featureId}</dd></div>}
                       {item.ranking !== undefined && <div><dt>Ranking</dt><dd>{item.ranking}</dd></div>}
                       {item.originatingPbiId && <div><dt>Feedback for</dt><dd>{item.originatingPbiId}</dd></div>}
                       {item.feedbackDelayDays !== undefined && <div><dt>Delay</dt><dd>{item.feedbackDelayDays}d</dd></div>}

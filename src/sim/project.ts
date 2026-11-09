@@ -1,6 +1,7 @@
 import { withSimulationSettings } from "./settings";
 import { scenarios } from "./scenarios";
 import type { PhaseSettings, ProjectPhase, ScenarioConfig, ScenarioId } from "./types";
+import { validateInitialFeatureBacklog } from "./initialFeatureBacklog";
 import { withWorkflow } from "./workflow";
 
 export const PROJECT_FILE_VERSION = 1;
@@ -224,7 +225,7 @@ function validatePhaseTimeline(phases: ProjectPhase[], horizonDays: number) {
 function validatePhaseSettings(header: ScenarioConfig, phase: ProjectPhase): ProjectPhase {
   assertRecord(phase.settings, `Settings for phase ${phase.label}`);
   const settings = phase.settings as unknown as Record<string, unknown>;
-  for (const initialOnly of ["workflow", "horizonDays", "warmupDays", "initialBacklog", "initialInventory", "featureBacklog", "seed"]) {
+  for (const initialOnly of ["workflow", "horizonDays", "warmupDays", "initialBacklog", "initialInventory", "featureBacklog", "initialFeatureBacklog", "seed"]) {
     if (initialOnly in settings) throw new Error("Initial backlog, workflow, horizon, and seed settings belong to the project header.");
   }
   const phaseConfig = { ...header, ...phase.settings, projectPhases: undefined };
@@ -260,6 +261,7 @@ export function parseProjectFile(contents: string): ProjectFile {
   assertRecord(raw.config, "Project configuration");
   const headerInput = raw.config as unknown as ScenarioConfig;
   const header = withWorkflow({ ...headerInput, projectPhases: undefined }, headerInput.workflow?.stages ?? []);
+  if (header.initialFeatureBacklog) header.initialFeatureBacklog = validateInitialFeatureBacklog(header.initialFeatureBacklog);
   if (!Number.isInteger(header.horizonDays) || header.horizonDays < 1) throw new Error("The project horizon must be a positive whole number.");
   if (!Array.isArray(raw.phases)) throw new Error("Project phases must be an array.");
   const phases = raw.phases as ProjectPhase[];

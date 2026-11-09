@@ -13,7 +13,7 @@ Feature: Feature decomposition, test gating, and delayed-feedback bugs
     And I set the PBIs per feature to a minimum of 5 and a maximum of 10
     Then the next simulation seeds 20 features in Backlog
     And every seeded feature contains between 5 and 10 PBIs
-    And every seeded PBI has a feature ID and feature title
+    And every seeded PBI has a feature ID and an empty short title
     And the same seed produces the same features, PBI counts, IDs, and titles
 
   Scenario: Reject invalid feature decomposition settings
@@ -53,7 +53,7 @@ Feature: Feature decomposition, test gating, and delayed-feedback bugs
     And the bug generation ratio is one bug per tested PBI
     When the PBI completes Test on day 40
     Then exactly one Bug is created for that PBI on day 40
-    And the Bug has its own unique ID and title
+    And the Bug has its own unique ID and an empty short title
     And the Bug retains the originating PBI ID and feature ID
     And the Bug enters Backlog inactive with 0 percent progress
     And completing the PBI again does not create another Bug
