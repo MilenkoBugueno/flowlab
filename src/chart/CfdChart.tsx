@@ -39,9 +39,11 @@ interface Props {
   onShowFeatureCompletionsChange: (show: boolean) => void;
   showFeatureHandoffs: boolean;
   onShowFeatureHandoffsChange: (show: boolean) => void;
+  focusMode?: boolean;
+  onExitFocusMode?: () => void;
 }
 
-export function CfdChart({ result, selectedDay, onSelectDay, showInactiveWork, onShowInactiveWorkChange, showFeatureCompletions, onShowFeatureCompletionsChange, showFeatureHandoffs, onShowFeatureHandoffsChange }: Props) {
+export function CfdChart({ result, selectedDay, onSelectDay, showInactiveWork, onShowInactiveWorkChange, showFeatureCompletions, onShowFeatureCompletionsChange, showFeatureHandoffs, onShowFeatureHandoffsChange, focusMode = false, onExitFocusMode }: Props) {
   const svgRef = useRef<SVGSVGElement>(null);
   const { config, snapshots } = result;
   const meanRunCount = "seeds" in result ? result.seeds.length : 1;
@@ -113,7 +115,7 @@ export function CfdChart({ result, selectedDay, onSelectDay, showInactiveWork, o
     <section className="chart-section" aria-labelledby="cfd-title">
       <div className="chart-header">
         <div>
-          <p className="eyebrow">Cumulative flow diagram</p>
+          <p className="eyebrow">{focusMode ? "Game view · Cumulative flow diagram" : "Cumulative flow diagram"}</p>
           <h2 id="cfd-title">Where work is accumulating</h2>
         </div>
         <div className="chart-controls">
@@ -125,6 +127,7 @@ export function CfdChart({ result, selectedDay, onSelectDay, showInactiveWork, o
           <label className="cfd-feature-toggle" title={canShowFeatureMarkers ? `Show one marker when the last PBI in a Feature enters ${finalActiveStage}.` : "Feature handoff markers belong to individual simulation runs."}>
             <input type="checkbox" checked={showFeatureHandoffs} disabled={!canShowFeatureMarkers} onChange={(event) => onShowFeatureHandoffsChange(event.target.checked)} />Show Feature handoffs
           </label>
+          {focusMode && <button type="button" className="focus-exit-button" onClick={onExitFocusMode}>Exit game view <kbd>Esc</kbd></button>}
         </div>
       </div>
       <div className="legend" aria-label="CFD state legend">

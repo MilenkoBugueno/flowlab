@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { CfdChart } from "./chart/CfdChart";
 import { DailyLog } from "./DailyLog";
 import { KanbanBoard } from "./KanbanBoard";
@@ -126,6 +126,15 @@ export default function App() {
   const [showInactiveWork, setShowInactiveWork] = useState(false);
   const [showFeatureCompletions, setShowFeatureCompletions] = useState(false);
   const [showFeatureHandoffs, setShowFeatureHandoffs] = useState(false);
+  const [focusMode, setFocusMode] = useState(false);
+  useEffect(() => {
+    if (!focusMode) return;
+    const exitFocusMode = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setFocusMode(false);
+    };
+    document.addEventListener("keydown", exitFocusMode);
+    return () => document.removeEventListener("keydown", exitFocusMode);
+  }, [focusMode]);
   const isBaselinePlan = phasePlan.every((phase) => {
     const interventions = phaseInterventionsForEntry(phase);
     return !interventions.wipLimits && !interventions.featureFocus && !interventions.backlogRanking;
@@ -408,7 +417,7 @@ export default function App() {
   };
 
   return (
-    <main className="cockpit">
+    <main className={`cockpit${focusMode ? " focus-mode" : ""}`}>
       <header className="topbar">
         <div>
           <p className="eyebrow">FlowLab · simulation cockpit</p>
@@ -589,9 +598,10 @@ export default function App() {
           <div className="visualization-tabs" role="tablist" aria-label="Simulation visualizations">
             <button type="button" role="tab" aria-selected={visualization === "cfd"} className={visualization === "cfd" ? "active" : ""} onClick={() => setVisualization("cfd")}>CFD</button>
             <button type="button" role="tab" aria-selected={visualization === "kanban"} className={visualization === "kanban" ? "active" : ""} onClick={() => setVisualization("kanban")}>Kanban</button>
+            <button type="button" className="game-view-button" onClick={() => { setVisualization("cfd"); setFocusMode(true); }}>Game view</button>
           </div>
           {visualization === "cfd" ? (
-            <CfdChart result={selected} selectedDay={visibleSelectedDay} onSelectDay={setSelectedDay} showInactiveWork={showInactiveWork} onShowInactiveWorkChange={setShowInactiveWork} showFeatureCompletions={showFeatureCompletions} onShowFeatureCompletionsChange={setShowFeatureCompletions} showFeatureHandoffs={showFeatureHandoffs} onShowFeatureHandoffsChange={setShowFeatureHandoffs} />
+            <CfdChart result={selected} selectedDay={visibleSelectedDay} onSelectDay={setSelectedDay} showInactiveWork={showInactiveWork} onShowInactiveWorkChange={setShowInactiveWork} showFeatureCompletions={showFeatureCompletions} onShowFeatureCompletionsChange={setShowFeatureCompletions} showFeatureHandoffs={showFeatureHandoffs} onShowFeatureHandoffsChange={setShowFeatureHandoffs} focusMode={focusMode} onExitFocusMode={() => setFocusMode(false)} />
           ) : "dailyLog" in selected ? (
             <KanbanBoard result={selected} selectedDay={visibleSelectedDay} onSelectDay={setSelectedDay} />
           ) : (
