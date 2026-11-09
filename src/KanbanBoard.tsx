@@ -39,6 +39,8 @@ interface Props {
   result: SimulationResult;
   selectedDay: number;
   onSelectDay: (day: number) => void;
+  focusMode?: boolean;
+  onExitFocusMode?: () => void;
 }
 
 export function compareCards(stage: Stage, rankByFeature: boolean, first: { item: WorkItem }, second: { item: WorkItem }): number {
@@ -54,7 +56,7 @@ export function compareCards(stage: Stage, rankByFeature: boolean, first: { item
     || first.item.id.localeCompare(second.item.id, undefined, { numeric: true });
 }
 
-export function KanbanBoard({ result, selectedDay, onSelectDay }: Props) {
+export function KanbanBoard({ result, selectedDay, onSelectDay, focusMode = false, onExitFocusMode }: Props) {
   const stages = result.config.workflow.stages;
   const { config: dayConfig, phase } = configForProjectDay(result.config, selectedDay);
   const rankBacklog = dayConfig.backlogRanking === true;
@@ -86,13 +88,16 @@ export function KanbanBoard({ result, selectedDay, onSelectDay }: Props) {
   return (
     <section className="kanban-board" aria-labelledby="kanban-title">
       <header>
-        <p className="eyebrow">Item trace</p>
+        <p className="eyebrow">{focusMode ? "Game view · Item trace" : "Item trace"}</p>
         <div className="kanban-header-row">
           <h2 id="kanban-title">Kanban board · Day {selectedDay}</h2>
-          <div className="kanban-day-control" aria-label="Kanban simulation day">
-            <button type="button" onClick={() => onSelectDay(selectedDay - 1)} disabled={selectedDay === 0}>Previous day</button>
-            <label htmlFor="kanban-day">Day<input id="kanban-day" type="number" min="0" max={result.config.horizonDays - 1} value={selectedDay} onChange={(event) => onSelectDay(Math.max(0, Math.min(result.config.horizonDays - 1, Number(event.target.value))))} /></label>
-            <button type="button" onClick={() => onSelectDay(selectedDay + 1)} disabled={selectedDay === result.config.horizonDays - 1}>Next day</button>
+          <div className="kanban-header-actions">
+            <div className="kanban-day-control" aria-label="Kanban simulation day">
+              <button type="button" onClick={() => onSelectDay(selectedDay - 1)} disabled={selectedDay === 0}>Previous day</button>
+              <label htmlFor="kanban-day">Day<input id="kanban-day" type="number" min="0" max={result.config.horizonDays - 1} value={selectedDay} onChange={(event) => onSelectDay(Math.max(0, Math.min(result.config.horizonDays - 1, Number(event.target.value))))} /></label>
+              <button type="button" onClick={() => onSelectDay(selectedDay + 1)} disabled={selectedDay === result.config.horizonDays - 1}>Next day</button>
+            </div>
+            {focusMode && <button type="button" className="focus-exit-button" onClick={onExitFocusMode}>Exit game view <kbd>Esc</kbd></button>}
           </div>
         </div>
         <p>Items created after this day are not shown.</p>

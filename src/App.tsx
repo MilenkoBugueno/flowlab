@@ -157,6 +157,10 @@ export default function App() {
     rampUpEffectiveness: 0.75,
   };
   const swarmForm = swarmDraft ?? savedSwarm ?? workflowConfig.swarm ?? fallbackSwarm;
+  const openGameView = () => {
+    if (visualization === "kanban" && !("dailyLog" in selected)) setVisualization("cfd");
+    setFocusMode(true);
+  };
 
   const saveProjectFile = () => {
     const project = createProjectFile(selectedConfig, seed, projectName.trim() || "FlowLab project");
@@ -595,15 +599,15 @@ export default function App() {
         </aside>
 
         <section className="cfd-canvas" aria-label="Simulation visualization workspace">
-          <div className="visualization-tabs" role="tablist" aria-label="Simulation visualizations">
+          <div className={`visualization-tabs${focusMode ? " game-view-tabs" : ""}`} role="tablist" aria-label="Simulation visualizations">
             <button type="button" role="tab" aria-selected={visualization === "cfd"} className={visualization === "cfd" ? "active" : ""} onClick={() => setVisualization("cfd")}>CFD</button>
             <button type="button" role="tab" aria-selected={visualization === "kanban"} className={visualization === "kanban" ? "active" : ""} onClick={() => setVisualization("kanban")}>Kanban</button>
-            <button type="button" className="game-view-button" onClick={() => { setVisualization("cfd"); setFocusMode(true); }}>Game view</button>
+            {!focusMode && <button type="button" className="game-view-button" onClick={openGameView}>Game view</button>}
           </div>
           {visualization === "cfd" ? (
             <CfdChart result={selected} selectedDay={visibleSelectedDay} onSelectDay={setSelectedDay} showInactiveWork={showInactiveWork} onShowInactiveWorkChange={setShowInactiveWork} showFeatureCompletions={showFeatureCompletions} onShowFeatureCompletionsChange={setShowFeatureCompletions} showFeatureHandoffs={showFeatureHandoffs} onShowFeatureHandoffsChange={setShowFeatureHandoffs} focusMode={focusMode} onExitFocusMode={() => setFocusMode(false)} />
           ) : "dailyLog" in selected ? (
-            <KanbanBoard result={selected} selectedDay={visibleSelectedDay} onSelectDay={setSelectedDay} />
+            <KanbanBoard result={selected} selectedDay={visibleSelectedDay} onSelectDay={setSelectedDay} focusMode={focusMode} onExitFocusMode={() => setFocusMode(false)} />
           ) : (
             <section className="kanban-empty"><p className="eyebrow">Item trace</p><h2>Kanban board</h2><p>Run one seed to inspect individual items. A mean CFD has no single set of cards.</p></section>
           )}
